@@ -1,0 +1,5 @@
+---
+description:
+globs:我使用的是windows系统，按照使用命令按照powershell来进行，Windows PowerShell不支持&&，我需要分别执行命令。
+alwaysApply: true
+---

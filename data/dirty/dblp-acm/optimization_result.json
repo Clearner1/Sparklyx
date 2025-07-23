@@ -1,0 +1,61 @@
+{
+    "field_weights": {
+        "authors": 0.022655142749439156,
+        "concat_authors_title_venue": 0.5439262484456237,
+        "title": 0.4297536625714992,
+        "venue": 0.003664946233438006
+    },
+    "best_query_spec": {
+        "field_analyzer_mapping": {
+            "title": [
+                "concat_authors_title_venue.standard"
+            ],
+            "authors": [
+                "concat_authors_title_venue.standard"
+            ]
+        },
+        "boost_map": {},
+        "filter_config": []
+    },
+    "performance_score": 0.1123158272355795,
+    "optimization_metadata": {
+        "confidence_level": 0.99,
+        "sample_size": 10000,
+        "max_combination_size": 3,
+        "optimization_query_limit": 250
+    },
+    "index_config_summary": {
+        "field_to_analyzers": {
+            "title": [
+                "standard",
+                "3gram"
+            ],
+            "authors": [
+                "standard",
+                "3gram"
+            ],
+            "venue": [
+                "standard",
+                "3gram"
+            ],
+            "concat_authors_title_venue": [
+                "standard",
+                "3gram"
+            ]
+        },
+        "concat_fields": {
+            "concat_authors_title_venue": [
+                "title",
+                "authors",
+                "venue"
+            ]
+        },
+        "default_analyzer": "standard",
+        "similarity_config": {
+            "type": "BM25",
+            "b": 0.75,
+            "k1": 1.2
+        },
+        "id_column": "_id"
+    }
+}

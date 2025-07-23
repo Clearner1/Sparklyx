@@ -1,0 +1,61 @@
+{
+    "field_weights": {
+        "concat_manufacturer_price_title": 0.24328377075224566,
+        "manufacturer": 0.41807036418659266,
+        "price": 0.0028169359557776203,
+        "title": 0.33582892910538403
+    },
+    "best_query_spec": {
+        "field_analyzer_mapping": {
+            "manufacturer": [
+                "manufacturer.3gram"
+            ],
+            "price": [
+                "concat_manufacturer_price_title.3gram"
+            ]
+        },
+        "boost_map": {},
+        "filter_config": []
+    },
+    "performance_score": 0.16794779914617539,
+    "optimization_metadata": {
+        "confidence_level": 0.99,
+        "sample_size": 10000,
+        "max_combination_size": 3,
+        "optimization_query_limit": 250
+    },
+    "index_config_summary": {
+        "field_to_analyzers": {
+            "title": [
+                "standard",
+                "3gram"
+            ],
+            "manufacturer": [
+                "standard",
+                "3gram"
+            ],
+            "price": [
+                "standard",
+                "3gram"
+            ],
+            "concat_manufacturer_price_title": [
+                "standard",
+                "3gram"
+            ]
+        },
+        "concat_fields": {
+            "concat_manufacturer_price_title": [
+                "title",
+                "manufacturer",
+                "price"
+            ]
+        },
+        "default_analyzer": "standard",
+        "similarity_config": {
+            "type": "BM25",
+            "b": 0.75,
+            "k1": 1.2
+        },
+        "id_column": "_id"
+    }
+}

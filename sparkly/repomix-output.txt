@@ -1,0 +1,3620 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+================================================================
+File Summary
+================================================================
+
+Purpose:
+--------
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+File Format:
+------------
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Multiple file entries, each consisting of:
+  a. A separator line (================)
+  b. The file path (File: path/to/file)
+  c. Another separator line
+  d. The full contents of the file
+  e. A blank line
+
+Usage Guidelines:
+-----------------
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+Notes:
+------
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+
+Additional Info:
+----------------
+
+================================================================
+Directory Structure
+================================================================
+analysis.py
+index_config.py
+index_optimizer/__init__.py
+index_optimizer/index_optimizer.py
+index_optimizer/query_scorer.py
+index/__init__.py
+index/index_base.py
+index/lucene_index.py
+query_generator/__init__.py
+query_generator/lucene_query_generator.py
+query_generator/lucene_weighted_query_generator.py
+query_generator/query_spec.py
+search.py
+simhash_reranker.py
+sparkly_auto.py
+utils.py
+
+================================================================
+Files
+================================================================
+
+================
+File: analysis.py
+================
+# needed for correct import paths to be found
+import lucene
+from org.apache.lucene.analysis.tokenattributes import CharTermAttribute, OffsetAttribute
+from org.apache.lucene.analysis import Analyzer
+from org.apache.pylucene.analysis import PythonAnalyzer,  PythonFilteringTokenFilter
+from org.apache.lucene.analysis.standard import StandardAnalyzer, StandardTokenizer
+from org.apache.lucene.analysis.shingle import ShingleAnalyzerWrapper
+from org.apache.lucene.analysis.ngram import  NGramTokenizer, EdgeNGramTokenFilter
+from org.apache.lucene.analysis.core import LowerCaseFilter
+from org.apache.lucene.analysis import CharArraySet
+from org.apache.lucene.analysis.pattern import PatternReplaceCharFilter
+from java.util.regex import Pattern
+
+def _fetch_terms_with_offsets(obj):
+    termAtt = obj.getAttribute(CharTermAttribute.class_)
+    offsetAtt = obj.getAttribute(OffsetAttribute.class_)
+    try:
+        obj.clearAttributes()
+        obj.reset()
+        while obj.incrementToken():
+            yield (termAtt.toString(), offsetAtt.startOffset(), offsetAtt.endOffset())
+    finally:
+        obj.end()
+        obj.close()
+
+def _fetch_terms(obj):
+    termAtt = obj.getAttribute(CharTermAttribute.class_)
+    try:
+        obj.clearAttributes()
+        obj.reset()
+        while obj.incrementToken():
+            yield termAtt.toString() 
+    finally:
+        obj.end()
+        obj.close()
+
+
+def analyze_generator(analyzer, text, with_offset=False):
+    """
+    Apply the analyzer to the text and return the tokens, optionally with offsets
+    
+    Parameters
+    ----------
+    analyzer : 
+        The lucene analyzer to be applied
+    text : str
+        the text that will be analyzer
+    with_offset : bool
+        if true, return the offsets with the tokens in the form 
+        (TOKEN, START_OFFSET, END_OFFSET)
+
+    Returns
+    -------
+    generator of str or tuples
+        a list of tokens potentially with offsets
+    """
+
+    stream = analyzer.tokenStream("contents", text)
+
+    if with_offset:
+        terms = _fetch_terms_with_offsets(stream)
+    else:
+        terms = _fetch_terms(stream)
+
+    return terms
+
+def analyze(analyzer, text, with_offset=False):
+    """
+    Apply the analyzer to the text and return the tokens, optionally with offsets
+    
+    Parameters
+    ----------
+    analyzer : 
+        The lucene analyzer to be applied
+    text : str
+        the text that will be analyzer
+    with_offset : bool
+        if true, return the offsets with the tokens in the form 
+        (TOKEN, START_OFFSET, END_OFFSET)
+
+    Returns
+    -------
+    list of str or tuples
+        a list of tokens potentially with offsets
+    """
+
+    return list(analyze_generator(analyzer, text, with_offset))
+
+
+def get_shingle_analyzer():
+    return ShingleAnalyzerWrapper(2, 3)
+
+def get_standard_analyzer_no_stop_words():
+    return StandardAnalyzer(CharArraySet.EMPTY_SET)
+
+class PythonAlnumTokenFilter(PythonFilteringTokenFilter):
+    def __init__(self, tokenStream):
+        super().__init__(tokenStream)
+        self.termAtt = self.addAttribute(CharTermAttribute.class_)
+
+    def accept(self):
+        return self.termAtt.toString().isalnum()
+
+
+
+class StrippedGram3Analyzer(PythonAnalyzer):
+
+    def __init__(self):
+        PythonAnalyzer.__init__(self)
+
+
+    def createComponents(self, fieldName):
+        
+        src = NGramTokenizer(3,3)
+        res = LowerCaseFilter(src)
+        # these chars already stripped out
+        #res = PythonAlnumTokenFilter(res)
+
+        return Analyzer.TokenStreamComponents(src, res)
+
+    def initReader(self, fieldName, reader):
+        pat = Pattern.compile("[^A-Za-z0-9]")
+        return PatternReplaceCharFilter(pat, '', reader)
+
+class Gram3Analyzer(PythonAnalyzer):
+
+    def __init__(self):
+        PythonAnalyzer.__init__(self)
+
+
+    def createComponents(self, fieldName):
+        
+        src = NGramTokenizer(3,3)
+        res = PythonAlnumTokenFilter(src)
+        res = LowerCaseFilter(res)
+
+        return Analyzer.TokenStreamComponents(src, res)
+
+class Gram2Analyzer(PythonAnalyzer):
+
+    def __init__(self):
+        PythonAnalyzer.__init__(self)
+
+
+    def createComponents(self, fieldName):
+        
+        src = NGramTokenizer(2,2)
+        res = PythonAlnumTokenFilter(src)
+        res = LowerCaseFilter(res)
+
+        return Analyzer.TokenStreamComponents(src, res)
+
+class Gram4Analyzer(PythonAnalyzer):
+
+    def __init__(self):
+        PythonAnalyzer.__init__(self)
+
+
+    def createComponents(self, fieldName):
+        
+        src = NGramTokenizer(4,4)
+        res = PythonAlnumTokenFilter(src)
+        res = LowerCaseFilter(res)
+
+        return Analyzer.TokenStreamComponents(src, res)
+
+class UnfilteredGram3Analyzer(PythonAnalyzer):
+
+    def __init__(self):
+        PythonAnalyzer.__init__(self)
+
+
+    def createComponents(self, fieldName):
+        
+        src = NGramTokenizer(3,3)
+        res = LowerCaseFilter(src)
+
+        return Analyzer.TokenStreamComponents(src, res)
+
+class UnfilteredGram5Analyzer(PythonAnalyzer):
+
+    def __init__(self):
+        PythonAnalyzer.__init__(self)
+
+
+    def createComponents(self, fieldName):
+        
+        src = NGramTokenizer(5,5)
+        res = LowerCaseFilter(src)
+
+        return Analyzer.TokenStreamComponents(src, res)
+
+class StandardEdgeGram36Analyzer(PythonAnalyzer):
+
+    def __init__(self):
+        PythonAnalyzer.__init__(self)
+
+    def createComponents(self, fieldName):
+        src = StandardTokenizer()
+        res = LowerCaseFilter(src)
+        res = PythonAlnumTokenFilter(res)
+        res = EdgeNGramTokenFilter(res, 3, 6, False)
+
+        return Analyzer.TokenStreamComponents(src, res)
+
+================
+File: index_config.py
+================
+from copy import deepcopy
+import json
+from sparkly.utils import type_check, type_check_iterable, type_check_call
+from typing import Iterable, Dict, Tuple
+
+class IndexConfig:
+
+    @type_check_call
+    def __init__(self, *, store_vectors: bool=False, id_col: str='_id', weighted_queries: bool=False):
+        self.field_to_analyzers = {}# 字段到分析器的映射
+        self.concat_fields = {}# 组合字段的配置
+        self._id_col = id_col# 唯一标识列
+        self.default_analyzer = 'standard'# 默认分析器
+        self.sim = {'type' : 'BM25', 'k1' : 1.2, 'b' : .75}  # 相似度算法配置
+        type_check(store_vectors, 'store_vectors', bool)  # 是否存储向量
+        self._store_vectors = store_vectors
+        self._frozen = False
+        self._weighted_queries = weighted_queries # 是否使用权重查询
+        # 新增: 字段权重存储
+        self._field_weights = {}  # 字段到权重的映射
+    
+
+    def freeze(self):
+        """
+        Returns
+        -------
+        IndexConfig
+            a frozen deepcopy of this index config
+        """
+        o = deepcopy(self)
+        o._frozen = True
+        return o
+
+    @property
+    def is_frozen(self):
+        """
+        Returns
+        -------
+        bool
+            True if this index is frozen (not modifiable) else False
+        """
+        return self._frozen
+    @property
+    def weighted_queries(self):
+        """
+        True if the term vectors in the index should be stored, else False
+        """
+        return self._weighted_queries
+
+    @weighted_queries.setter
+    @type_check_call
+    def weighted_queries(self, o: bool):
+        self._raise_if_frozen()
+        self._weighted_queries = o
+
+    @property
+    def store_vectors(self):
+        """
+        True if the term vectors in the index should be stored, else False
+        """
+        return self._store_vectors
+
+    @store_vectors.setter
+    @type_check_call
+    def store_vectors(self, o: bool):
+        self._raise_if_frozen()
+        self._store_vectors = o
+    
+    @property
+    def id_col(self):
+        """
+        The unique id column for the records in the index this must be a 32 or 64 bit integer
+        """
+        return self._id_col
+
+    @id_col.setter
+    @type_check_call
+    def id_col(self, o: str):
+        self._raise_if_frozen()
+        self._id_col = o
+
+    @property
+    def weights(self):
+        """获取属性配置的权重"""
+        return self._weights
+
+    @weights.setter
+    def weights(self, weights: Dict[Tuple[str, str], float]):
+        """设置属性配置的权重"""
+        self._weights = weights
+
+    @classmethod
+    def from_json(cls, data):
+        """
+        construct an index config from a dict or json string,
+        see IndexConfig.to_dict for expected format
+
+        Returns
+        -------
+        IndexConfig
+        """
+        # """从JSON数据构造配置"""
+        if isinstance(data, str):
+            data = json.loads(data)
+
+        o = cls()
+        o.field_to_analyzers = data['field_to_analyzers']
+        o.concat_fields = data['concat_fields']
+        o.default_analyzer = data['default_analyzer']
+        o.sim = data['sim']
+        o.id_col = data['id_col']
+        o.weighted_queries = data['weighted_queries']
+        # 新增: 加载字段权重（处理向后兼容）
+        if 'field_weights' in data:
+            o._field_weights = data['field_weights']
+        return o
+
+    def to_dict(self):
+        """
+        convert this IndexConfig to a dictionary which can easily 
+        be stored as json
+
+        Returns
+        -------
+        dict
+            A dictionary representation of this IndexConfig
+        """
+        d = {
+                'field_to_analyzers' : self.field_to_analyzers,
+                'concat_fields' : self.concat_fields,
+                'default_analyzer' : self.default_analyzer,
+                'sim' : self.sim,
+                'store_vectors' : self.store_vectors,
+                'id_col' : self.id_col,
+                'weighted_queries' : self.weighted_queries,
+                # 新增: 保存字段权重
+                'field_weights': self._field_weights
+        }
+        return d
+
+    def to_json(self):
+        """
+        Dump this IndexConfig to a valid json strings
+
+        Returns
+        -------
+        str
+        """
+        return json.dumps(self.to_dict())
+
+    @type_check_call
+    def add_field(self, field : str, analyzers: Iterable[str]):
+        """
+        Add a new field to be indexed with this config
+
+        Parameters
+        ----------
+
+        field : str
+            The name of the field in the table to the index （添加一个字段到索引中）
+            例如：add_field('name', ['standard', '3gram'])
+            会将 'name' 字段添加到索引中，并使用两种分析器处理
+        analyzers : set, list or tuple of str
+            The names of the analyzers that will be used to index the field
+        """
+        self._raise_if_frozen()
+        self.field_to_analyzers[field] = list(analyzers)
+
+        return self
+
+    @type_check_call
+    def remove_field(self, field: str):
+        """
+        remove a field from the config
+
+        Parameters
+        ----------
+
+        field : str 
+            the field to be removed from the config
+
+        Returns
+        -------
+        bool 
+            True if the field existed else False
+        """
+
+        self._raise_if_frozen()
+        if field in self.field_to_analyzers:
+            self.field_to_analyzers.pop(field)
+            if field in self.concat_fields:
+                self.concat_fields.pop(field)
+            return True
+        else:
+            return False
+
+    @type_check_call
+    def add_concat_field(self, field : str, concat_fields: Iterable[str], analyzers: Iterable[str]):
+        """
+        Add a new concat field to be indexed with this config
+
+        Parameters
+        ----------
+
+        field : str
+            The name of the field that will be added to the index
+
+        concat_fields : set, list or tuple of strs
+            the fields in the table that will be concatenated together to create `field`
+        会创建一个新的组合字段，将name和address的内容合并,并使用相应的分析器进行分词
+        analyzers : set, list or tuple of str
+            The names of the analyzers that will be used to index the field
+        """
+        self._raise_if_frozen()
+        self.concat_fields[field] = list(concat_fields)
+        self.field_to_analyzers[field] = list(analyzers)
+
+        return self
+
+    def get_analyzed_fields(self, query_spec=None):
+        """
+        Get the fields used by the index or query_spec. If `query_spec` is None, 
+        the fields that are used by the index are returned.
+
+        Parameters
+        ----------
+
+        query_spec : QuerySpec, optional
+            if provided, the fields that are used by `query_spec` in creating a query
+
+        Returns
+        -------
+        list of str
+            the fields used
+        """
+        if query_spec is not None:
+            fields = []
+            for f in query_spec:
+                if f in self.concat_fields:
+                    fields += self.concat_fields[f]
+                else:
+                    fields.append(f)
+        else:
+            fields = sum(self.concat_fields.values(), [])
+            fields += (x for x in self.field_to_analyzers if x not in self.concat_fields) 
+
+        return list(set(fields))
+
+    def _raise_if_frozen(self):
+        if self.is_frozen:
+            raise RuntimeError('Frozen IndexConfigs cannot be modified')
+    
+    # 添加权重相关的属性和方法
+    @property
+    def field_weights(self):
+        """获取字段权重配置"""
+        return self._field_weights
+    
+    @field_weights.setter
+    @type_check_call
+    def field_weights(self, weights: Dict[str, float]):
+        """设置字段权重配置
+        
+        Parameters
+        ----------
+        weights : Dict[str, float]
+            字段到权重的映射字典，权重应该是正数
+        """
+        self._raise_if_frozen()
+        # 验证权重的有效性
+        for field, weight in weights.items():
+            if weight < 0:
+                raise ValueError(f"Field weight must be non-negative (got {weight} for {field})")
+        self._field_weights = weights
+
+    def set_field_weight(self, field: str, weight: float):
+        """设置单个字段的权重
+        
+        Parameters
+        ----------
+        field : str
+            字段名
+        weight : float
+            权重值，应该是正数
+        """
+        self._raise_if_frozen()
+        if weight < 0:
+            raise ValueError(f"Field weight must be non-negative (got {weight})")
+        self._field_weights[field] = weight
+    
+    def normalize_weights(self):
+        """归一化字段权重，使所有权重和为1"""
+        self._raise_if_frozen()
+        if not self._field_weights:
+            return
+            
+        total = sum(self._field_weights.values())
+        if total > 0:  # 避免除零
+            self._field_weights = {
+                field: weight/total 
+                for field, weight in self._field_weights.items()
+            }
+
+    def unfreeze(self):
+        """
+        暂时解冻配置以允许修改
+        Returns
+        -------
+        self : 返回配置自身以支持链式调用
+        """
+        self._frozen = False
+        return self
+
+================
+File: index_optimizer/__init__.py
+================
+from .index_optimizer import *
+from .query_scorer import *
+
+================
+File: index_optimizer/index_optimizer.py
+================
+from itertools import islice, combinations
+from scipy import stats
+from joblib import delayed
+from pyspark import SparkContext
+import pyspark.sql.functions as F
+import pyspark
+import numpy as np
+from sparkly.index import Index
+from sparkly.index_config import IndexConfig
+from sparkly.query_generator import QuerySpec
+import pandas as pd
+import math
+from copy import deepcopy
+from sparkly.index.lucene_index import LuceneIndex
+from sparkly.utils import  get_logger, invoke_task, type_check, type_check_call
+from sparkly.index_optimizer.query_scorer import AUCQueryScorer, QueryScorer, WeightedAUCQueryScorer
+from sparkly.search import search
+from typing import Annotated
+from pydantic import Field
+
+pd.set_option('display.width', 150)
+
+log = get_logger(__name__)
+
+
+def _compute_wilcoxon_score(x,y):
+    z = x  - y 
+    # score is 0 if all elements are the same
+    # pval is 1
+    if (z == 0).all():
+        return (0, 1)
+    else:
+        return stats.wilcoxon(z)
+        
+def adaptive_continuity_correction_wilcoxon(x, y):
+    """
+    改进的Wilcoxon符号秩检验
+    主要改进：根据样本特征自适应调整连续性校正因子
+    - 小样本(≤10): 使用0.3校正，提高敏感性
+    - 中样本(11-25): 使用0.4校正，平衡精度与稳健性
+    - 大样本(>25): 根据重复值情况使用0.4-0.5校正
+    
+    Parameters:
+    -----------
+    x, y: array-like
+        两个配置的AUC分数向量
+        
+    Returns:
+    --------
+    tuple: (统计量, p值)
+    """
+    from scipy.stats import wilcoxon
+    import numpy as np
+    
+    differences = x - y
+    n = len(differences[differences != 0])
+    
+    # 核心改进：根据样本量和数据分布调整连续性校正因子
+    if n <= 10:
+        correction = 0.3  # 小样本用更小的校正
+    elif n <= 25: 
+        correction = 0.4
+    else:
+        correction = 0.5  # 大样本用标准校正
+    
+    # 根据数据的离散程度进一步调整
+    if len(np.unique(differences)) < n * 0.7:  # 有很多重复值
+        correction *= 0.8
+    
+    # 手动计算Wilcoxon统计量（为了应用自定义校正）
+    abs_diffs = np.abs(differences[differences != 0])
+    ranks = rank_data_with_ties(abs_diffs)
+    
+    positive_ranks = ranks[differences[differences != 0] > 0]
+    W_plus = np.sum(positive_ranks)
+    
+    # 应用自适应连续性校正
+    E_W = n * (n + 1) / 4
+    Var_W = n * (n + 1) * (2 * n + 1) / 24
+    
+    z = (W_plus - E_W - correction) / np.sqrt(Var_W)
+    
+    from scipy.stats import norm
+    p_value = 2 * (1 - norm.cdf(abs(z)))
+    
+    return W_plus, p_value
+
+class IndexOptimizer():
+    """
+    a class for optimizing the search columns and analyzers for indexes
+    """
+    @type_check_call
+    def __init__(self, 
+            is_dedupe: bool,
+            scorer: QueryScorer | None=None,
+            conf: Annotated[float, Field(ge=0, lt=1.0)]=.99, 
+            init_top_k: int=10,
+            max_combination_size: int=3,
+            opt_query_limit: int=250,
+            sample_size: int=10000,
+            use_early_pruning: bool=True
+        ):
+        """
+        Parameters
+        ----------
+        is_dedupe : bool
+            Should be true if the search table == the indexed table
+
+        scorer : QueryScorer, optional
+            the class that will be used to score the queries during optimization.
+            If not provided defaults to AUCQueryScorer
+
+        conf : float, default=.99
+            the confidence score cut off during optimization
+            查询评分器，如果为None则默认使用WeightedAUCQueryScorer
+        """
+
+        if conf < 0 or conf >= 1:
+            raise ValueError(f'conf must be in the interval [0, 1), (got {conf})')
+
+        self._scorer = scorer if scorer is not None else AUCQueryScorer()
+        self._index = None
+        self._confidence = conf
+        self._is_dedupe = is_dedupe
+        self._search_chunk_size = 50
+        self._opt_query_limit = opt_query_limit
+        self._init_top_k = init_top_k
+        self._max_combination_size = max_combination_size
+        self._sample_size = sample_size
+        self._use_early_pruning = use_early_pruning 
+
+        self._auc_sim = {
+            'type' : 'BM25',
+            'b' : .75,
+            'k1' : 1.2,
+        }
+
+    
+    @property
+    def index(self):
+        return self._index
+
+    @index.setter
+    @type_check_call
+    def index(self, i: Index):
+        self._index = i
+        self._index.to_spark()
+
+    def _generate_cand_query_specs(self, bases, cands):
+        if isinstance(bases, QuerySpec):
+            return [bases.union(c) for c in cands]
+        else:
+            return list({b.union(c) for b in bases for c in cands})
+
+    @staticmethod
+    def _count_empty_queries(spec, nulls):
+        cols = [c for c in spec if c in nulls.columns]
+        # FIXME this is just assuming that concat columns don't contain nulls
+        if len(cols) != len(spec):
+            return 0
+
+        return nulls['count'].loc[nulls[cols].all(axis=1)].sum()
+
+
+    def _get_min_tasks(self):
+        return SparkContext.getOrCreate().defaultParallelism * 4
+
+    def _execute_and_score(self, tasks : pd.Series):
+        sc = SparkContext.getOrCreate()
+        res = sc.parallelize(tasks.values, len(tasks))\
+                .map(lambda x : self._scorer.score_query_results(invoke_task(x), None, self._is_dedupe))\
+                .collect()
+        
+        return pd.Series(res, index=tasks.index)
+
+    
+    def _get_nulls(self, search_df):
+        cols = [c for c in search_df.columns if c != '_id']
+
+        return search_df.select([F.col(c).isNull().alias(c) for c in cols])\
+                        .groupby(*cols)\
+                        .count()\
+                        .toPandas()
+
+    
+    def _iter_slices_df(self, df, slice_size):
+        for start in range(0, len(df), slice_size):
+            end = start + self._search_chunk_size
+            recs = df.iloc[start:end]
+            yield recs
+
+        if start < len(df):
+            recs = df.iloc[start:]
+            yield recs
+
+    def _gen_search_tasks(self, search_df, query_spec=None, id_col='_id'):
+        
+        for search_recs in self._iter_slices_df(search_df, self._search_chunk_size):
+            search_recs = search_recs.where(pd.notnull(search_recs), None)\
+                                    .astype(object)\
+                                    .set_index(id_col)\
+                                    .to_dict('records')
+
+            yield delayed(search)(self._index, query_spec, self._opt_query_limit, search_recs)
+
+
+    def _get_topk_specs(self, cands, search_df, nulls, k=1, null_top_k=20, early_term_thres=math.inf):
+        """
+        查找产生最佳搜索结果的前 k 个查询规格（specs）。
+
+        Args:
+            cands: 候选查询规格的 DataFrame。必须包含一个 'spec' 列。
+            search_df: 包含搜索数据的 DataFrame。
+            nulls: 不应返回任何结果的查询集合。用于过滤候选规格。
+            k: 要返回的最佳规格数量。
+            null_top_k: 如果某些规格产生空查询，则要考虑的候选规格的最大数量。
+            early_term_thres:  提前终止的阈值。此特定实现中未使用。
+
+        Returns:
+            包含前 k 个查询规格的 DataFrame。
+        """
+        # 如果 k 大于等于候选规格的数量，则返回所有候选规格。
+        if k >= len(cands):
+            cands['mean'] = 0.0
+            cands['std'] = 0.0
+            return cands
+        
+        if null_top_k > 0:
+            # 计算每个规格产生的空查询数量。
+            cands['num_empty_queries'] = cands['spec'].apply(IndexOptimizer._count_empty_queries, nulls=nulls)
+            cands.sort_values('num_empty_queries', inplace=True)
+            if cands['num_empty_queries'].eq(0).sum() < null_top_k:
+                # if there are less than null top-k specs that produce no empty queries, 
+                # take the top 20 than produce as few empty queries as possible
+                cands = cands.head(null_top_k)
+                log.info(f' < {null_top_k} candidates produce 0 empty queries, taking top-k')
+                log.info(f'top-{null_top_k} cands :\n{cands}') 
+            else:
+                # 否则，取所有不产生空查询的规格
+                cands = cands.loc[cands['num_empty_queries'].eq(0)]
+
+            if len(cands) == 0:
+                raise RuntimeError('no candidates left after removing those that contain null')
+        # 为每个剩余的候选规格生成搜索任务。
+        task_queues = cands['spec'].apply(lambda x : self._gen_search_tasks(query_spec=x, search_df=search_df))
+        # 初始化一个空的 DataFrame 来存储每个规格的得分。
+        scores = pd.DataFrame([], columns=task_queues.index)
+
+        while True:
+            # 确定每次迭代要运行的最小任务数。
+            min_tasks = self._get_min_tasks() if self._use_early_pruning else len(search_df)
+            # 计算本次迭代中每个队列要运行的任务数。
+            n_tasks_per_queue = max(5, min_tasks // len(task_queues))
+            log.debug(f'n_queues : {len(task_queues)}, min_tasks : {min_tasks}, n_tasks_per_queue : {n_tasks_per_queue}')
+            task_grp = task_queues.apply(lambda x : list(islice(x, n_tasks_per_queue)))
+            # any of the iterators are exhasusted, terminate
+            if task_grp.apply(len).eq(0).any() == True:
+                log.debug('tasks exhausted, returning min')
+                break
+            # get the next slice of tasks to run seach for 
+            # run search for tasks
+            # list of lists with query results (id2, id1_list, scores)
+            task_grp = task_grp.explode()
+
+            # 执行搜索任务并对结果进行评分。
+            res = self._execute_and_score(task_grp)\
+                 .explode()\
+                .groupby(level=0)\
+                .apply(lambda x : x.values)
+
+            # 将结果转换为 DataFrame。
+            res = pd.DataFrame(res.to_dict(), dtype=np.float64)
+            # 将新结果添加到当前得分中。
+            scores = pd.concat([scores, res], ignore_index=True)
+            # 计算平均得分和标准差。
+            score_stats = scores.apply(lambda x : pd.Series({
+                                                    'mean' : np.mean(x),
+                                                    'std' : x.std()
+                                                }))\
+                                .transpose()\
+
+            score_stats['spec'] = cands['spec']
+            score_stats = score_stats.sort_values('mean')
+            log.debug(f'score_stats\n{score_stats.to_string()}')
+
+            # get minimum rows
+            topk = score_stats.head(k)
+            # running list of all the specs that are less 
+            # than EVERYTHING in topk 
+            # these can be safely dropped at the end 
+            drop_specs = score_stats.index.values[k:]
+
+            # 对每个 topk 规格执行 Wilcoxon 秩和检验。
+            for i in range(len(topk)):
+                min_row = topk.iloc[i]
+                # compute the wilcoxon scores for the rows against the row 
+                # with the minimum mean
+                wc_scores = scores.drop(columns=topk.iloc[:i+1].index)\
+                                    .apply(lambda x : adaptive_continuity_correction_wilcoxon(scores[min_row.name], x))\
+                                    .transpose()
+            
+                wc_scores.columns = ['statistic', 'pval']
+                log.debug(f'wilcoxon scores\n{wc_scores}')
+                # all the query specs that should be excluded 
+                # because they have a score that is greater
+                exclude_cols = wc_scores['pval'].lt(1 - self._confidence)
+                drop_specs = np.intersect1d(drop_specs, exclude_cols[exclude_cols.values].index.values)
+            
+            if len(drop_specs) == len(score_stats) - k:
+                # everything was statistically significant
+                break
+            else:
+                # remove specs that compared less to everything else
+                scores.drop(columns=drop_specs, inplace=True)
+                task_queues.drop(index=drop_specs, inplace=True)
+
+
+
+
+        return topk
+    
+    def _union_specs(self, specs):
+        s = specs[0]
+        for o in specs[1:]:
+            s = s.union(o)
+        return s
+
+    def _gen_combs(self, specs, max_k=3):
+        if max_k is None:
+            max_k = len(specs)
+
+        out = list(specs)
+        for k in range(2, max_k+1):
+            out.extend(map(self._union_specs, combinations(specs, k)))
+
+        return out
+
+
+
+    def _has_overlapping_fields(self, spec):
+        # check that the spec doesn't have any fields that overlap
+        concat_fields = self.index.config.concat_fields
+        for f in spec:
+            if f in concat_fields:
+                for v in concat_fields[f]:
+                    if v in spec:
+                        return True
+        # check for sets of paths which have overlapping 
+        for paths in spec.values():
+            paths = {s.split('.')[0] for s in paths}
+            for f in paths:
+                if f in concat_fields:
+                    for v in concat_fields[f]:
+                        if v in paths:
+                            return True
+
+        return False
+
+    
+    
+    def _sample_df(self, search_df, nulls):
+        if self._sample_size is not None:
+            search_df =  search_df.limit(self._sample_size)
+        return search_df.toPandas()
+    
+    def _count_average_tokens(self, df):
+        cols = [F.size(F.split(F.col(c).cast("string"), "\\s+")).alias(c) for c in df.columns if c != '_id']
+        df = df.select(cols).toPandas()
+        df = df.where(df >= 0)
+        return df.mean()
+
+    @type_check_call
+    def make_index_config(self, df: pyspark.sql.DataFrame, id_col='_id') -> IndexConfig:
+        """
+        create the starting index config which can then be used to for optimization
+        throws out any columns where the average number of 
+        whitespace delimited tokens are >= 50
+
+        Parameters
+        ----------
+        df : pyspark.sql.DataFrame
+            the dataframe that we want to generate a config for
+        id_col : str
+            the unique id column for the records in the dataframe
+        """
+
+        analyzers = [
+                'standard',
+                '3gram',
+        ]
+        index_config = IndexConfig()
+        
+        counts = self._count_average_tokens(df)
+        log.debug(f'token counts :\n{counts}')
+        # drop long columns 去掉列(内容平均超过50的)
+        columns = counts.index[counts <= 50].tolist()
+        if len(columns) == 0:
+            raise RuntimeError('all columns dropped due to length')
+
+        log.debug(f'columns for config : {columns}')
+
+
+        for c in columns:
+            if c == id_col:
+                continue
+            index_config.add_field(c, analyzers)
+
+        # 当一个数据库有多个列，则自动连接其他列
+        if len(columns) > 1:       
+            name = 'concat_' + '_'.join(sorted(columns))
+            index_config.add_concat_field(name, columns, analyzers)
+
+        # 设置相似度配置
+        index_config.sim = deepcopy(self._auc_sim)
+
+        return index_config
+
+    
+    @type_check_call
+    def optimize(self, index : Index, search_df: pyspark.sql.DataFrame) -> QuerySpec:
+        """
+
+        Parameters
+        ----------
+
+        index : Index
+            the index that will have an optimzed query spec created for it
+            
+        search_df : pyspark.sql.DataFrame:
+            the records that will be used to choose the query spec
+
+        Returns
+        -------
+
+        QuerySpec
+            a query spec optimized for searching for `search_df` using `index`
+
+        """
+        self.index = index
+        # 评估过程
+        nulls = self._get_nulls(search_df)
+        #  1. 数据采样
+        search_df = self._sample_df(search_df, nulls)
+        # 2. 获取所有可能的查询配置
+        full_query_spec = self.index.get_full_query_spec(cross_fields=True)
+
+        # generate single column query specs
+        # 3. 单字段评估
+        single_specs =  pd.DataFrame({
+            'spec' : [QuerySpec({k : [v]})
+                       for k,p in full_query_spec.items()
+                         for v in p]
+        })
+
+        log.debug(f'starting candidate query specs\n{single_specs}')
+        # get the top-k starting single query specs 经验值10
+        # 评估单字段性能
+        start_k = self._init_top_k
+        # 4. 选择前k个最优的配置
+        single_specs = self._get_topk_specs(single_specs, search_df, null_top_k=-1, k=start_k, nulls=nulls)
+
+        single_specs = single_specs.loc[single_specs['mean'] < 1.0]
+
+        log.debug(f'top-{start_k} starting candidate query specs\n{single_specs.to_string()}')
+
+        # 计算字段权重
+        field_weights = self._calculate_field_weights(single_specs)
+        log.debug(f"Field weights before setting: {field_weights}")
+        # 临时解冻配置，更新权重，然后重新冻结
+        self.index.config.unfreeze()
+        self.index.config.field_weights = field_weights
+        log.debug(f"Config field weights after setting: {self.index.config.field_weights}")
+        self.index.config.freeze()
+
+        import json
+        log.info("Saving field weights to field_weights.json")
+        with open('field_weights.json', 'w') as f:
+            json.dump(field_weights, f, indent=4)
+
+        print("\n=== Field Weights ===")
+        for field, weight in self.index.config.field_weights.items():
+            print(f"{field}: {weight:.4f}")
+        print("===================\n")
+        # generate combinations of query specs       
+        # 5. 生成字段组合
+        extensions = self._gen_combs(
+            single_specs['spec'].values, 
+            max_k=self._max_combination_size
+            )
+        
+        extensions = [s for s in extensions 
+                    if not self._has_overlapping_fields(s)]
+        
+        # 优化迭代
+        max_depth = 1
+        # optimization state
+        min_score = math.inf
+        best_query_specs = [QuerySpec()]
+        # maximum number of opt iterations
+        # defaults to no limit
+        #max_depth = max_depth if max_depth is not None else len(cands)
+        # main optimization loop # 6. 迭代优化组合
+        for i in range(max_depth):
+            # add a new path to the current best
+            cands = pd.DataFrame({'spec' : self._generate_cand_query_specs(best_query_specs, extensions)})
+            cands = cands.loc[~cands['spec'].apply(self._has_overlapping_fields)]
+            # add the current best for comparision
+            # skip any columns that contain null on the first iteration
+            # this is because we want to ensure that every record has a value to 
+            # index/block on
+
+            # take the top spec if this is the last iteration, else the top 10
+            k = 1 if i == max_depth - 1 else 10
+            top_specs_stats = self._get_topk_specs(cands, search_df, k=k, nulls=nulls)
+            top_spec = top_specs_stats.iloc[0]
+
+            log.debug(f'best spec = {top_spec}')
+            cand_score = top_spec['mean']
+            
+            if  cand_score >= min_score:
+                # no improvement this iteration, terminate
+                log.debug('cand_score >= min_score, end search')
+                break
+            else:
+                # prevent warning being raised on the first iteration
+                if not math.isinf(min_score):
+                    log.debug(f'% improvement : {(min_score - cand_score) / min_score}')
+                # update current min
+                min_score = cand_score
+                best_query_specs = top_specs_stats['spec'].tolist()
+                log.debug('cand_score < min_score, replacing')
+
+
+        return best_query_specs[0]
+
+    # 计算字段权重的辅助方法
+    def _calculate_field_weights(self, single_specs):
+        """基于meanAUC计算字段权重
+        
+        Parameters
+        ----------
+        single_specs : pd.DataFrame
+            包含每个字段-分析器组合的meanAUC评分
+            
+        Returns
+        -------
+        Dict[str, float]
+            字段到权重的映射
+        """
+        # 获取基础字段名（去掉分析器后缀）
+        single_specs['base_field'] = single_specs['spec'].apply(
+            lambda x: list(x.keys())[0].split('.')[0]
+        )
+        
+        # 对每个基础字段，选择最佳的meanAUC分数
+        field_scores = single_specs.groupby('base_field')['mean'].min()
+        log.debug(f"Field scores:\n{field_scores}")  # 添加日志
+
+        # 转换分数为权重（分数越小越好）
+        max_score = field_scores.max()
+        min_score = field_scores.min()
+
+        # 使用归一化的线性转换
+        normalized_scores = (max_score - field_scores) / (max_score - min_score)
+        log.debug(f"Normalized scores:\n{normalized_scores}")
+
+        # 使用 softmax 来增加差异
+        exp_scores = np.exp(normalized_scores * 5)  # 乘以5来增加差异
+        weights = exp_scores / exp_scores.sum()
+
+        result = weights.to_dict()
+        log.debug(f"Calculated weights: {result}")  # 添加日志
+        return weights.to_dict()
+
+================
+File: index_optimizer/query_scorer.py
+================
+from sparkly.utils import get_logger, norm_auc
+from scipy import stats
+from abc import ABC, abstractmethod
+
+import numpy as np
+from copy import deepcopy
+
+log = get_logger(__name__)
+
+
+def score_query_results(query_results):
+    return [score_query_result(t.scores) for t in query_results]
+
+def score_query_result(scores, drop_first=False):
+    scores = np.array(scores)
+    if len(scores.shape) == 0:
+        return 1.0
+
+    if drop_first:
+        scores = scores[1:]
+
+    if len(scores) < 2:
+        return 1.0
+    else:
+        return norm_auc(scores / scores[0])
+
+def score_query_result_sum(scores):
+    scores = np.array(scores)
+    if len(scores.shape) == 0 or len(scores) < 2:
+        return 0.0
+    else:
+        return scores.sum() / (norm_auc(scores / scores[0]) ** 2)
+
+def _update_spec(base, field, path):
+        s = deepcopy(base)
+        paths = s.get(field, []) 
+        # don't add redundant paths
+        if path not in paths:
+            paths.append(path)
+        s[field] = paths
+        return s
+
+def compute_wilcoxon_score(x,y):
+    z = x  -y 
+    # score is 0 if all elements are the same
+    # pval is 1
+    if (z == 0).all():
+        return (0, 1)
+    else:
+        return stats.wilcoxon(z)
+
+class QueryScorer(ABC):
+    
+    # lower score means better query 
+    @abstractmethod
+    def score_query_results(self, query_results, query_spec) -> list:
+        pass
+    @abstractmethod
+    def score_query_result(self, query_result, query_spec) -> float:
+        pass
+
+
+class AUCQueryScorer(QueryScorer):
+
+    def __init__(self):
+        pass
+
+    def score_query_results(self, query_results, query_spec, drop_first) -> list:
+        return [self.score_query_result(r, query_spec, drop_first) for r in query_results]
+
+    def score_query_result(self, query_result, query_spec, drop_first) -> float:
+        return score_query_result(query_result.scores, drop_first)
+
+
+
+class RankQueryScorer(QueryScorer):
+
+    def __init__(self, threshold, k):
+        self._threshold = threshold
+        self._k = k
+
+    def score_query_results(self, query_results, query_spec) -> list:
+        return [self.score_query_result(r, query_spec) for r in query_results]
+
+    def score_query_result(self, query_result, query_spec) -> float:
+        scores = query_result.scores
+        if len(scores.shape) == 0 or len(scores) < 2:
+            return self._k
+        scores = scores / scores[0]
+        return np.searchsorted(scores, self._threshold, side='right')
+        
+
+        return score_query_result(query_result.scores)
+    
+class WeightedAUCQueryScorer(AUCQueryScorer):
+    """考虑字段权重的评分器"""
+    
+    def __init__(self):
+        super().__init__()
+
+    def score_query_results(self, query_results, query_spec, drop_first=False) -> list:
+        """评估带权重的查询结果
+        
+        Parameters
+        ----------
+        query_results : list
+            查询结果列表
+        query_spec : QuerySpec
+            查询规格
+        drop_first : bool
+            是否丢弃第一个结果
+            
+        Returns
+        -------
+        list
+            评分结果列表
+        """
+        # 先用基础的AUC评分
+        base_scores = super().score_query_results(query_results, query_spec, drop_first)
+        
+        if query_spec is None:
+            return base_scores
+            
+        # 获取涉及字段的权重
+        field_weights = {}
+        for field, _ in query_spec.items():
+            base_field = field.split('.')[0]
+            if base_field not in field_weights:
+                field_weights[base_field] = query_spec._config.field_weights.get(base_field, 1.0)
+        
+        # 如果没有权重信息，返回基础分数
+        if not field_weights:
+            return base_scores
+            
+        # 计算加权平均的字段权重
+        avg_weight = sum(field_weights.values()) / len(field_weights)
+        
+        # 调整评分结果
+        weighted_scores = [score * avg_weight for score in base_scores]
+        
+        return weighted_scores
+
+    def score_query_result(self, query_result, query_spec, drop_first=False) -> float:
+        """评估单个带权重的查询结果"""
+        # 获取基础评分
+        base_score = super().score_query_result(query_result, query_spec, drop_first)
+        
+        if query_spec is None:
+            return base_score
+        
+        # 获取涉及字段的权重
+        field_weights = {}
+        for field, _ in query_spec.items():
+            base_field = field.split('.')[0]
+            if base_field not in field_weights:
+                field_weights[base_field] = query_spec._config.field_weights.get(base_field, 1.0)
+                
+        # 如果没有权重信息，返回基础分数
+        if not field_weights:
+            return base_score
+            
+        # 计算加权平均的字段权重
+        avg_weight = sum(field_weights.values()) / len(field_weights)
+        
+        # 返回调整后的分数
+        return base_score * avg_weight
+
+================
+File: index/__init__.py
+================
+from .index_base import Index, QueryResult
+from .lucene_index import LuceneIndex
+#from .index_config import IndexConfig
+
+================
+File: index/index_base.py
+================
+from abc import abstractmethod, ABC, abstractproperty
+import pandas as pd
+from collections import namedtuple
+from sparkly.query_generator import QuerySpec
+
+query_result_fields = ['ids', 'scores', 'search_time']
+QueryResult = namedtuple("QueryResult",
+                            query_result_fields
+                        )
+
+EMPTY_QUERY_RESULT = QueryResult(None, None, None)
+    
+# TODO COMMENT
+class Index(ABC):
+
+    @abstractmethod
+    def upsert_docs(self, df) -> None:
+        pass
+
+    @abstractmethod
+    def delete_docs(self, ids) -> int:
+        pass
+
+    @abstractmethod
+    def search(self, doc, query_spec, limit):
+        pass
+
+    @abstractmethod
+    def search_many(self, docs, query_spec, limit):
+        pass
+
+    @abstractproperty
+    def config(self):
+        # the IndexConfig for the index
+        pass
+
+================
+File: index/lucene_index.py
+================
+from copy import deepcopy
+from typing import Union
+import shutil 
+import tempfile
+import os
+from tqdm import tqdm
+from sparkly.analysis import Gram4Analyzer, Gram2Analyzer, UnfilteredGram3Analyzer
+from sparkly.query_generator import QuerySpec, LuceneQueryGenerator, LuceneWeightedQueryGenerator
+from sparkly.analysis import get_standard_analyzer_no_stop_words, Gram3Analyzer, StandardEdgeGram36Analyzer, UnfilteredGram5Analyzer, get_shingle_analyzer
+from sparkly.analysis import StrippedGram3Analyzer
+from sparkly.utils import (
+        Timer, init_jvm, zip_dir, 
+        atomic_unzip, kill_loky_workers, 
+        spark_to_pandas_stream, attach_current_thread_jvm,
+        type_check_call,
+)
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import numpy as np
+import pandas as pd
+from joblib import Parallel, delayed
+import multiprocessing
+import pyspark.sql.types as T
+import pyspark.sql.functions as F
+from sparkly.utils import type_check, type_check_iterable
+import time
+from itertools import islice
+from pydantic import (
+        FilePath,
+        PositiveInt
+)
+
+from pyspark import SparkFiles
+from pyspark import SparkContext
+from pyspark import sql
+import pickle
+
+import lucene
+from java.nio.file import Paths
+from java.util import HashMap, HashSet
+from java.lang import Long
+from org.apache.lucene.search import BooleanQuery, BooleanClause, IndexSearcher, MatchAllDocsQuery
+from org.apache.lucene.search import SortedNumericSortField, Sort, SortField
+from org.apache.lucene.analysis.standard import StandardAnalyzer
+from org.apache.lucene.analysis.miscellaneous import PerFieldAnalyzerWrapper
+from org.apache.lucene.search.similarities import BM25Similarity
+from org.apache.lucene.index import  DirectoryReader
+from org.apache.lucene.document import Document, StoredField, Field, LongPoint
+from org.apache.lucene.index import IndexWriter, IndexWriterConfig
+from org.apache.lucene.store import  FSDirectory
+from org.apache.lucene.document import FieldType, SortedNumericDocValuesField
+from org.apache.lucene.index import IndexOptions
+
+from sparkly.index_config import IndexConfig
+from .index_base import Index, QueryResult, EMPTY_QUERY_RESULT
+
+
+class _DocumentConverter:
+    @type_check_call
+    def __init__(self, config : IndexConfig):
+
+        self._field_to_doc_fields = {}
+        self._config = deepcopy(config)
+        #self._id_field_type = FieldType()
+        # self._id_field_type.setStored(True)
+        self._text_field_type = FieldType()
+        self._text_field_type.setIndexOptions(IndexOptions.DOCS_AND_FREQS)
+        self._text_field_type.setStoreTermVectors(self._config.store_vectors)
+
+        for f, analyzers in config.field_to_analyzers.items():
+            # each field goes to <FIELD>.<ANALYZER_NAME>
+            fields = [f'{f}.{a}' for a in analyzers]
+            self._field_to_doc_fields[f] = fields
+
+        
+
+    
+    def _format_columns(self, df):
+        for field, cols in self._config.concat_fields.items():
+            df[field] = df[cols[0]].fillna('').astype(str).copy()
+            df[field] = df[field].str.cat(df[cols[1:]].astype(str), sep=' ', na_rep='')
+
+        for f, fields in self._field_to_doc_fields.items():
+            for new_field in fields:
+                if new_field != f:
+                    df[new_field] = df[f]
+        # get unique fields
+        fields = list(set(sum(self._field_to_doc_fields.values(), [])))
+        df.set_index(self._config.id_col, inplace=True)
+        df = df[fields]
+        return df
+    
+    def _row_to_lucene_doc(self, row):
+        doc = Document()
+        row.dropna(inplace=True)
+        # this has to be a string because 
+        # pylucene improperly casts to an int, storing the incorrect 
+        # value for 64 bit integers 
+        f = StoredField(self._config.id_col, str(row.name))
+        #f = StoredField(self._config.id_col, Long.MAX_VALUE)
+        #f.setLongValue(int(row.name))
+        doc.add(f)
+        doc.add(LongPoint(self._config.id_col, int(row.name)))
+        # needed for sorting by id_col
+        #doc.add(SortedNumericDocValuesField(self._config.id_col, int(row.name)))
+        for k,v in row.items():
+            doc.add(Field(k, str(v), self._text_field_type))
+
+        return doc
+
+    @type_check_call
+    def convert_docs(self, df : pd.DataFrame):
+        # index of df is expected to be _id column
+        df = self._format_columns(df)
+        docs = df.apply(self._row_to_lucene_doc, axis=1)
+
+        return docs
+
+
+
+class LuceneIndex(Index):
+    ANALYZERS = {
+            'standard' : get_standard_analyzer_no_stop_words,
+            'shingle' : get_shingle_analyzer,
+            'standard_stopwords' : StandardAnalyzer,
+            '3gram' : Gram3Analyzer,
+            '2gram' : Gram2Analyzer,
+            '4gram' : Gram4Analyzer,
+            'stripped_3gram' : StrippedGram3Analyzer,
+            'unfiltered_3gram' : UnfilteredGram3Analyzer,
+            'standard36edgegram': StandardEdgeGram36Analyzer, 
+            'unfiltered_5gram' : UnfilteredGram5Analyzer,
+    }
+    PY_META_FILE = 'PY_META.json'
+    LUCENE_DIR = 'LUCENE_INDEX'
+
+    @type_check_call
+    def __init__(self, index_path: Path | str, config: IndexConfig, delete_if_exists: bool=True):
+        self._init_jvm()
+        self._index_path = Path(index_path).absolute()
+        self._config = config.freeze()
+        self._spark = False
+        self._query_gen = None
+        self._searcher = None
+        self._index_reader = None
+        self._spark_index_zip_file = None
+        self._spark_index_dir_name = None
+        self._initialized = False
+        self._is_built = False
+        self._index_build_chunk_size = 2500
+
+        self._arg_check_config(self.config)
+        # clear old index if it exists
+        if delete_if_exists and self._index_path.exists():
+            shutil.rmtree(self._index_path)
+
+        # write the config
+        self._write_meta_data(config)
+    
+    @property
+    def index_path(self):
+        return self._index_path
+
+    @property
+    def config(self):
+        """
+        the index config used to build this index
+
+        Returns
+        -------
+        IndexConfig
+        """
+        return self._config
+
+    @property
+    def query_gen(self):
+        """
+        the query generator for this index
+
+        Returns
+        -------
+        LuceneQueryGenerator
+        """
+        return self._query_gen
+    
+    def _init_jvm(self):
+        init_jvm(['-Xmx256m'])
+        #attach_current_thread_jvm()
+        
+    def init(self):
+        """
+        initialize the index for usage in a spark worker. This method 
+        must be called before calling search or search_many.
+        """
+        self._init_jvm()
+        if not self._initialized:
+            p = self._get_index_dir(self._get_data_dir())
+            config = self._read_meta_data()
+            analyzer = self._get_analyzer(config)
+            self._index_reader = DirectoryReader.open(p)
+            self._searcher = IndexSearcher(self._index_reader)
+            self._searcher.setSimilarity(self._get_sim(config))
+            # default is 1024 and errors on some datasets
+            BooleanQuery.setMaxClauseCount(500000)
+            if self.config.weighted_queries:
+                self._query_gen = LuceneWeightedQueryGenerator(analyzer, config, self._index_reader)
+            else:
+                self._query_gen = LuceneQueryGenerator(analyzer, config, self._index_reader)
+
+            self._initialized = True
+
+    def deinit(self):
+        """
+        release resources held by this Index
+        """
+        self._query_gen = None
+        self._index_reader = None
+        self._searcher = None
+        self._initialized = False
+    
+    def _get_sim(self, config):
+        sim_dict = config.sim
+        if sim_dict['type'] != 'BM25':
+            raise ValueError(sim_dict)
+        else:
+            s = BM25Similarity(float(sim_dict['k1']), float(sim_dict['b']))
+            return s
+
+    def _get_analyzer(self, config):
+        mapping = HashMap()
+        if config.default_analyzer not in self.ANALYZERS:
+            raise ValueError(f'unknown analyzer {config.default_analyzer}, (current possible analyzers {list(self.ANALYZERS)}')
+
+        for f, analyzers in config.field_to_analyzers.items():
+            for a in analyzers:
+                if a not in self.ANALYZERS:
+                    raise ValueError(f'unknown analyzer {a}, (current possible analyzers {list(self.ANALYZERS)}')
+                mapping.put(f'{f}.{a}', self.ANALYZERS[a]())
+                
+
+        analyzer = PerFieldAnalyzerWrapper(
+                self.ANALYZERS[config.default_analyzer](),
+                mapping
+            )
+        return analyzer
+    
+    def _get_data_dir(self):
+        if self._spark:
+            p = Path(SparkFiles.get(self._spark_index_dir_name))
+            # if the file hasn't been unzipped yet,
+            # atomically unzip the file and then use it
+            if not p.exists():
+                zipped = Path(SparkFiles.get(self._spark_index_zip_file.name))
+                if not zipped.exists():
+                    raise RuntimeError('unable to get zipped index file')
+                atomic_unzip(zipped, p)
+        else:
+            self._index_path.mkdir(parents=True, exist_ok=True)
+            p = self._index_path
+
+        return p
+    
+    def _get_index_dir(self, index_path):
+        p = index_path / self.LUCENE_DIR
+        p.mkdir(parents=True, exist_ok=True)
+
+        return FSDirectory.open(Paths.get(str(p)))
+    
+    def _get_index_writer(self, index_config, index_path):
+        analyzer = self._get_analyzer(index_config)
+        index_dir = self._get_index_dir(index_path)
+        index_writer = IndexWriter(index_dir, IndexWriterConfig(analyzer))
+
+        return index_writer
+    
+    def _write_meta_data(self, config):
+        # write the index meta data 
+        self._index_path.mkdir(parents=True, exist_ok=True)
+        with open(self._index_path / self.PY_META_FILE, 'w') as ofs:
+            ofs.write(config.to_json())
+
+    def _read_meta_data(self):
+        p = self._get_data_dir()
+        with open(p / self.PY_META_FILE) as ofs:
+            return IndexConfig.from_json(ofs.read()).freeze()
+        
+    
+    
+    @property
+    def is_on_spark(self):
+        """
+        True if this index has been distributed to the spark workers else False
+
+        Returns
+        -------
+        bool
+        """
+        return self._spark
+
+    @property
+    def is_built(self):
+        """
+        True if this index has been built else False
+
+        Returns
+        -------
+        bool
+        """
+        return self._is_built
+
+    def to_spark(self):
+        """
+        send this index to the spark cluster. subsequent uses will read files from 
+        SparkFiles, allowing spark workers to perform search with a local copy of 
+        the index.
+        """
+        self.deinit()
+        if not self.is_built:
+            raise RuntimeError('LuceneIndex must be built before it can be distributed to spark workers')
+
+        if not self._spark:
+            sc = SparkContext.getOrCreate()
+            self._spark_index_zip_file = zip_dir(self._index_path)
+            self._spark_index_dir_name = self._spark_index_zip_file.stem
+            sc.addFile(str(self._spark_index_zip_file))
+            self._spark = True
+    
+    def __reduce__(self):
+        self.deinit()
+        return super().__reduce__()
+
+    def _build_segment(self, df, config, tmp_dir_path):
+
+        # use pid to decide which tmp index to write to
+        path = tmp_dir_path/ str(multiprocessing.current_process().pid)
+        self._init_jvm()
+        index_writer = self._get_index_writer(config, path)
+        self._add_docs(df, index_writer)
+        index_writer.commit()
+        index_writer.close()
+
+        return path
+
+    def _add_docs(self, df, index_writer):
+        if len(df.columns) == 0:
+            raise ValueError('dataframe with no columns passed to build')
+        self._init_jvm()
+
+        doc_conv = _DocumentConverter(self.config)
+        docs = doc_conv.convert_docs(df)
+        
+        for d in docs.values:
+            index_writer.addDocument(d)
+
+    
+    def _merge_index_segments(self, index_writer, dirs):
+        # merge segments 
+        index_writer.addIndexes(dirs)
+        index_writer.forceMerge(1)
+    
+    def _chunk_df(self, df):
+        for i in range(0, len(df), self._index_build_chunk_size):
+            end = min(len(df), i+self._index_build_chunk_size)
+            yield df.iloc[i:end]
+
+    
+    def _arg_check_config(self, config):
+        if len(config.field_to_analyzers) == 0:
+            raise ValueError('config with no fields passed to build')
+
+    def _arg_check_upsert(self, df : Union[pd.DataFrame, sql.DataFrame]):
+
+        config = self.config
+        if config.id_col not in df.columns:
+            raise ValueError(f'id column {config.id_col} is not is dataframe columns {df.columns}')
+        
+        missing_cols = set(config.get_analyzed_fields()) - set(df.columns)
+        if len(missing_cols) != 0:
+            raise ValueError(f'dataframe is missing columns {list(missing_cols)} required by config (actual columns in df {df.columns})')
+
+        if isinstance(df, pd.DataFrame):
+            dtype = df[config.id_col].dtype
+            if not pd.api.types.is_integer_dtype(dtype):
+                raise TypeError(f'id_col must be integer type (got {dtype})')
+        else:
+            dtype = df.schema[config.id_col].dataType
+            if dtype.typeName() not in {'integer', 'long'}:
+                raise TypeError(f'id_col must be integer type (got {dtype})')
+    
+    @classmethod
+    def _build_spark_worker_local(cls, df_itr, config):
+        index = None
+        index_path = None
+        index_writer = None
+        tmp_dir_path = Path(tempfile.gettempdir())
+        tmp_dir_path.mkdir(parents=True, exist_ok=True)
+        # 128 MB
+        CHUNK_SIZE = 128 * (2**20)
+        for df in df_itr:
+            if len(df) == 0:
+                continue
+
+            if index is None:
+                index_path = tmp_dir_path / f'{time.time()}_{df.iloc[0][config.id_col]}'
+                index = cls(index_path, config)
+                index_writer = index._get_index_writer(index.config, index_path)
+
+            index._add_docs(df, index_writer)
+
+        index_writer.commit()
+        index_writer.close()
+        
+        for p in cls._serialize_and_stream_files(index_path, CHUNK_SIZE):
+            # change file path to be relvative so that it can be easily relocated 
+            # elsewhere
+            p['file'] = p['file'].apply(lambda x: str(Path(x).relative_to(tmp_dir_path)))
+            yield p
+
+        shutil.rmtree(index_path, ignore_errors=True)
+    
+    @staticmethod
+    def _write_file_chunk(file, offset, data):
+        path = Path(file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # O_APPEND (i.e. open(file, 'ab') ) cannot be used because on linux it 
+        # will just append and ignore the offset
+        # 
+        # create the file if it doesn't exist, else just open for write
+        fd = os.open(file, os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            n = os.pwrite(fd, data, offset)
+            if n != len(data):
+                raise IOError(f'{n} != {len(data)}')
+        finally:
+            os.close(fd)
+
+
+    @staticmethod
+    def _stream_files(d, chunk_size):
+        # go through all of the files and 
+        for f in d.glob('**/*'):
+            # skip non-files
+            if not f.is_file():
+                continue 
+            f = str(f)
+            # split file into chunks of size at most chunk_size
+            with open(f, 'rb') as ifs:
+                offset = 0
+                while True:
+                    data = ifs.read(chunk_size)
+                    if len(data) == 0:
+                        break
+                    yield (f, offset, data)
+                    offset += len(data)
+
+
+    @staticmethod
+    def _serialize_and_stream_files(d, part_size):
+        # part_size in bytes
+        # take all files, serialize with path and return 
+        df_columns = ['file', 'offset', 'data']
+
+        curr_size = 0
+        rows = []
+        for row in LuceneIndex._stream_files(d, part_size):
+            rows.append(row)
+            curr_size += len(row[-1])
+            # buffer full
+            if curr_size >= part_size:
+                yield pd.DataFrame(rows, columns=df_columns)
+                rows.clear()
+                curr_size = 0
+        # yield last rows if there are any
+        if len(rows) > 0:
+            yield pd.DataFrame(rows, columns=df_columns)
+            rows.clear()
+                
+    def _build_spark(self, df, df_size, config, tmp_dir_path):
+        nparts = df_size // self._index_build_chunk_size
+        df = df.repartition(nparts, config.id_col)
+        
+        schema = T.StructType([
+            T.StructField('file', T.StringType(), False),
+            T.StructField('offset', T.LongType(), False),
+            T.StructField('data', T.BinaryType(), False),
+        ])
+        
+        
+        df = df.mapInPandas(lambda x : LuceneIndex._build_spark_worker_local(x, config), schema=schema)\
+                .withColumn('file', F.concat( F.lit(str(tmp_dir_path) + '/'), F.col('file')) )\
+                .persist()
+        # index stuff
+        df.count()
+        itr = df.toLocalIterator(True)
+
+        # write with threads 
+        Parallel(n_jobs=-1, backend='threading')(delayed(self._write_file_chunk)(*row) for row in itr)
+        df.unpersist()
+        return list(tmp_dir_path.iterdir())
+
+    def _build_parallel_local(self, df, config, tmp_dir_base):
+        # slice the dataframe into a local iterator of pandas dataframes
+        slices = spark_to_pandas_stream(df, self._index_build_chunk_size)
+        # use all available threads
+        pool = Parallel(n_jobs=-1)
+        # build in parallel in sub dirs of tmp dir
+        dirs = pool(delayed(self._build_segment)(s, config, tmp_dir_base) for s in tqdm(slices))
+        # dedupe the dirs
+        dirs = set(dirs)
+        # kill the threadpool to prevent them from sitting on resources
+
+        return dirs
+    
+    def _count_docs(self, query):
+        self.init()
+        c = self._searcher.count(query)
+        return c
+    
+    def _delete_docs(self, index_writer, ids):
+        if isinstance(ids, (np.ndarray, pd.Series)):
+            ids = ids.tolist()
+        type_check_iterable(ids, 'ids', list, int)
+
+        query = LongPoint.newSetQuery(self.config.id_col, ids)
+        cnt = self._count_docs(query)
+            
+        index_writer.deleteDocuments(query)
+        return cnt
+    
+    def _invalidate_spark(self):
+        self._spark = False
+        self.deinit()
+
+    def delete_docs(self, ids):
+        
+        if not self.is_built:
+            raise RuntimeError('index not built')
+
+        index_writer = self._get_index_writer(self.config, self._index_path)
+        try:
+            cnt = self._delete_docs(index_writer, ids)
+        except:
+            index_writer.rollback()
+            raise
+        else:
+            index_writer.commit()
+            index_writer.close()
+
+        self._invalidate_spark()
+        return cnt
+
+    
+    @type_check_call
+    def upsert_docs(self, df: Union[pd.DataFrame, sql.DataFrame], disable_distributed: bool=False, force_distributed: bool=False):
+        """
+        build the index, indexing df according to self.config
+
+        Parameters
+        ----------
+
+        df : pd.DataFrame or pyspark DataFrame
+            the table that will be indexed, if a pyspark DataFrame is provided, the build will be done
+            in parallel for suffciently large tables
+
+        disable_distributed : bool, default=False
+            disable using spark for building the index even for large tables
+
+        force_distributed : bool, default=False
+            force using spark for building the index even for smaller tables
+        """
+        if disable_distributed and force_distributed:
+            raise ValueError('disable_distributed and force_distributed both set to True, only one can be set')
+        self._arg_check_upsert(df)
+
+        # verify the index is correct
+        index_writer = self._get_index_writer(self.config, self._index_path)
+        try:
+            start_index_size = 0 
+            num_docs_deleted = 0
+            # upsert  1. 更新现有记录处理
+            if self.is_built:
+                tmp_df = df
+                if isinstance(df, sql.DataFrame):
+                    tmp_df = df.select(self.config.id_col).toPandas()
+                ids = tmp_df[self.config.id_col].values.tolist()
+
+                start_index_size = self.num_indexed_docs()
+                num_docs_deleted = self._delete_docs(index_writer, ids)
+            
+
+            if isinstance(df, sql.DataFrame):
+                # project out unused columns
+                df_size = df.count()
+                df = df.select(self.config.id_col, *self.config.get_analyzed_fields())
+                if df_size > self._index_build_chunk_size * 10:
+                    # build large tables in parallel
+                    # put temp indexes in temp dir for easy deleting later
+                    with TemporaryDirectory() as tmp_dir_base:
+                        tmp_dir_base = Path(tmp_dir_base)
+                        
+                        if force_distributed or (df_size > self._index_build_chunk_size * 50 and not disable_distributed):
+                            # build with spark if very large and disributed build is allowed
+                            dirs = self._build_spark(df, df_size, self.config, tmp_dir_base)
+                        else:
+                            # else just use local threads
+                            dirs = self._build_parallel_local(df, self.config, tmp_dir_base)
+                        # get the name of the index dir in each tmp sub dir
+                        dirs = [self._get_index_dir(d) for d in dirs]
+
+                        # merge the segments 
+                        self._merge_index_segments(index_writer, dirs)
+                        # 
+                        #kill_loky_workers()
+                    # temp indexes deleted here
+                else:
+                    # table is small, build it single threaded
+                    df = df.toPandas()
+
+            if isinstance(df, pd.DataFrame):
+                df_size = len(df)
+                # if table is small just build directly
+                self._add_docs(df, index_writer)
+        except:
+            index_writer.rollback()
+            raise 
+        else:
+            index_writer.commit()
+        finally:
+            index_writer.close()
+
+        self._is_built = True
+
+        self._invalidate_spark()
+        # verify the index is correct
+        end_index_size = self.num_indexed_docs()
+        if df_size - num_docs_deleted + start_index_size != end_index_size:
+            raise RuntimeError(f'index build failed, number of indexed docs ({end_index_size}) is different than number'
+                                f'expected df_size={df_size}, n_delete={num_docs_deleted}, start_size={start_index_size}')
+    
+    def num_indexed_docs(self):
+        """
+        get the number of indexed documents
+        """
+        self.init()
+        n = self._index_reader.numDocs()
+
+        return n
+
+    @type_check_call
+    def get_full_query_spec(self, cross_fields: bool=False):
+        """
+        get a query spec that uses all indexed columns
+
+        Parameters
+        ----------
+
+        cross_fields : bool, default = False
+            if True return <FIELD> -> <CONCAT FIELD> in the query spec if FIELD is used to create CONCAT_FIELD
+            else just return <FIELD> -> <FIELD> and <CONCAT_FIELD> -> <CONCAT_FIELD> pairs
+
+        Returns
+        -------
+        QuerySpec
+
+        """
+
+        if self._config is None:
+            self._config = self._read_meta_data()
+
+        search_to_index_fields = {}
+        for f, analyzers in self._config.field_to_analyzers.items():
+            # each field goes to <FIELD>.<ANALYZER_NAME>
+            fields = [f'{f}.{a}' for a in analyzers]
+            search_to_index_fields[f] = fields
+
+        if cross_fields:
+            for f, search_fields in self._config.concat_fields.items():
+                analyzers = self._config.field_to_analyzers[f]
+                index_fields = [f'{f}.{a}' for a in analyzers]
+                for sfield in search_fields:
+                    search_to_index_fields[sfield] += index_fields
+
+        return QuerySpec(search_to_index_fields)
+
+    @type_check_call
+    def search(self, doc: pd.Series | dict, query_spec: QuerySpec, limit: PositiveInt):
+        """
+        perform search for `doc` according to `query_spec` return at most `limit` docs
+
+        Parameters
+        ----------
+
+        doc : pd.Series or dict
+            the record for searching
+
+        query_spec : QuerySpec
+            the query template that specifies how to search for `doc`
+
+        limit : int
+            the maximum number of documents returned
+
+        Returns
+        -------
+        QueryResult
+            the documents matching the `doc`
+        """
+        load_fields = HashSet()
+        load_fields.add(self.config.id_col)
+        query = self._query_gen.generate_query(doc, query_spec)
+        #query = query.rewrite(self._index_reader)
+
+        if query is None:
+            return EMPTY_QUERY_RESULT
+
+        else:
+            timer = Timer()
+            res = self._searcher.search(query, limit)
+            t = timer.get_interval()
+
+            res = res.scoreDocs
+            nhits = len(res)
+            scores = np.fromiter((h.score for h in res), np.float32, nhits)
+            # fetch docs and get our id
+            ids = np.fromiter((int(self._searcher.doc(h.doc, load_fields).get(self.config.id_col)) for h in res), np.int64, nhits)
+            return QueryResult(
+                    ids = ids,
+                    scores = scores, 
+                    search_time = t,
+                )
+        
+    @type_check_call
+    def search_many(self, docs: pd.DataFrame, query_spec: QuerySpec, limit: PositiveInt):
+        """
+        perform search for the documents in `docs` according to `query_spec` return at most `limit` docs
+        per document `docs`.
+
+        Parameters
+        ----------
+
+        doc : pd.DataFrame
+            the records for searching
+
+        query_spec : QuerySpec
+            the query template that specifies how to search for `doc`
+
+        limit : int
+            the maximum number of documents returned
+
+        Returns
+        -------
+        pd.DataFrame
+            the search results for each document in `docs`, indexed by `docs`.index
+            
+        """
+
+        self.init()
+        id_col = self.config.id_col
+        load_fields = HashSet()
+        load_fields.add(id_col)
+
+        search_res = []
+        for doc in docs.to_dict('records'):
+            query = self._query_gen.generate_query(doc, query_spec)
+            #query = query.rewrite(self._index_reader)
+            if query is None:
+                search_res.append(EMPTY_QUERY_RESULT)
+            else:
+                timer = Timer()
+                res = self._searcher.search(query, limit)
+                t = timer.get_interval()
+
+                res = res.scoreDocs
+
+                nhits = len(res)
+                scores = np.fromiter((h.score for h in res), np.float32, nhits)
+                # fetch docs and get our id
+                ids = np.fromiter((int(self._searcher.doc(h.doc, load_fields).get(id_col)) for h in res), np.int64, nhits)
+                search_res.append( QueryResult(
+                        ids = ids,
+                        scores = scores, 
+                        search_time = t,
+                    ) )
+
+        return pd.DataFrame(search_res, index=docs.index)
+        
+    
+    def id_to_lucene_id(self, i):
+        q = LongPoint.newExactQuery(self.config.id_col, i)
+        res = self._searcher.search(q, 2).scoreDocs
+        if len(res) == 0:
+            raise KeyError(f'no document with _id = {i} found')
+        elif len(res) > 1:
+            raise KeyError(f'multiple documents with _id = {i} found')
+
+        return res[0].doc
+
+
+    def _score_docs(self, ids_filter, query, limit):
+        q = BooleanQuery.Builder()\
+                .add(ids_filter, BooleanClause.Occur.FILTER)\
+                .add(query, BooleanClause.Occur.SHOULD)\
+                .build()
+        
+        res = self._searcher.search(q, limit)
+
+        return res.scoreDocs
+
+
+    def score_docs(self, ids, queries : dict):
+        # queries = {(field, indexed_field) -> Query}
+        # ids the _id fields in the documents
+        if not isinstance(ids, list):
+            raise TypeError()
+        if len(ids) == 0:
+            return pd.DataFrame()
+
+        limit = len(ids)
+
+        ids_filter = LongPoint.newSetQuery(self.config.id_col, ids)
+
+        df_columns = [
+                pd.Series(
+                    data=ids,
+                    index=[self.id_to_lucene_id(i) for i in ids],
+                    name=self.config.id_col
+
+                )
+        ]
+        for name, q in queries.items():
+            res = self._score_docs(ids_filter, q, limit)
+            nhits = len(res)
+            df_columns.append(
+                    pd.Series( 
+                        data=np.fromiter((h.score for h in res), np.float32, nhits),
+                        index=np.fromiter((h.doc for h in res), np.int64, nhits),
+                        name=name
+                    )
+            )
+
+        df = pd.concat(df_columns, axis=1).fillna(0.0)
+        return df
+
+================
+File: query_generator/__init__.py
+================
+from .query_spec import QuerySpec
+from .lucene_query_generator import LuceneQueryGenerator
+from .lucene_weighted_query_generator import LuceneWeightedQueryGenerator
+
+================
+File: query_generator/lucene_query_generator.py
+================
+import pandas as pd
+from sparkly.utils import is_null, type_check_call
+from sparkly.query_generator.query_spec import QuerySpec
+#import sparkly
+from sparkly.index_config import IndexConfig
+import lucene
+from org.apache.lucene.util import QueryBuilder
+from org.apache.lucene.search import BooleanQuery, BooleanClause, BoostQuery
+
+
+class LuceneQueryGenerator:
+    """
+    A class for generating queries for Lucene based indexes
+    """
+    @type_check_call
+    def __init__(self, analyzer, config: IndexConfig, index_reader):
+        """
+        Parameters
+        ----------
+        analyzer : 
+            the luncene analyzer used to create queries
+        config : IndexConfig
+            the index config of the index that will be searched
+        """
+        self._analyzer = analyzer
+        self._config = config
+        # index reader not used 
+        self._query_builder = QueryBuilder(analyzer)
+        self._query_builder.setEnableGraphQueries(False)
+    
+    @type_check_call
+    def generate_query(self, doc: dict | pd.Series, query_spec: QuerySpec):
+        """
+        Generate a query for doc given the query spec
+
+        Parameters
+        ----------
+        doc : dict | pd.Series
+            a record that will be used to generate the query
+        query_spec : QuerySpec
+            the template for the query being built
+
+        Returns
+        -------
+        A lucene query which can be passed to an index searcher
+        """
+        query = BooleanQuery.Builder()
+        filter_query = BooleanQuery.Builder()
+        filters = query_spec.filter
+        add_filter = False
+        
+        for field, indexed_fields in query_spec.items():
+            if field not in doc:
+                # create concat field on the fly
+                if field in self._config.concat_fields:
+                    val = ' '.join(str(doc[f]) for f in self._config.concat_fields[field])
+                else:
+                    raise RuntimeError(f'field {field} not in search document {doc}, (config : {self._config.to_dict()})')
+            else:
+                # otherwise just retrive from doc
+                val = doc[field]
+
+            # convert to lucene query if the val is valid
+            if is_null(val):
+                continue
+
+            val = str(val)
+            for f in indexed_fields:
+                clause = self._query_builder.createBooleanQuery(f, val)
+                # empty clause skip adding to query
+                if clause is None:
+                    continue
+
+                if (field, f) in filters:
+                    filter_query.add(clause, BooleanClause.Occur.SHOULD)
+                    add_filter = True
+
+                # add boosting weight if it exists
+                weight = query_spec.boost_map.get((field, f))
+                if weight is not None:
+                    clause = BoostQuery(clause, weight)
+
+                query.add(clause, BooleanClause.Occur.SHOULD)
+
+
+        if len(filters) != 0 and add_filter:
+            query.add(filter_query.build(), BooleanClause.Occur.FILTER)
+
+        return query.build()
+
+    @type_check_call
+    def generate_query_clauses(self, doc: dict | pd.Series, query_spec: QuerySpec):
+        """
+        generate the clauses for each field -> analyzer pair, filters are ignored
+
+        Parameters
+        ----------
+        doc : dict | pd.Series
+            a record that will be used to generate the clauses
+        query_spec : QuerySpec
+            the template for the query being built
+
+        Returns
+        -------
+        A dict of ((field, indexed_fields) -> BooleanQuery)
+        """
+        # this isn't great code writing considering that this is a 
+        # duplicate of the code above but generate_query is a hot code path
+        # and can use all the optimization that it can get
+        clauses = {}
+        for field, indexed_fields in query_spec.items():
+            if field not in doc:
+                # create concat field on the fly
+                if field in self._config.concat_fields:
+                    val = ' '.join(str(doc.get(f, '')) for f in self._config.concat_fields[field])
+                else:
+                    raise RuntimeError(f'field {field} not in search document {doc}')
+            else:
+                # otherwise just retrive from doc
+                val = doc[field]
+            # convert to lucene query if the val is valid
+            if pd.isnull(val):
+                continue
+
+            for f in indexed_fields:
+                clause = self._query_builder.createBooleanQuery(f, str(val))
+                if clause is None:
+                    continue
+                # add boosting weight if it exists
+                weight = query_spec.boost_map.get((field, f))
+                if weight is not None:
+                    clause = BoostQuery(clause, weight)
+
+                clauses[(field, f)] = clause
+
+        return clauses
+
+================
+File: query_generator/lucene_weighted_query_generator.py
+================
+import pandas as pd
+from sparkly.utils import is_null
+import lucene
+from org.apache.lucene.util import QueryBuilder
+from org.apache.lucene.index import Term
+from org.apache.lucene.search import BooleanQuery, BooleanClause, BoostQuery, TermQuery
+from org.apache.lucene.analysis.tokenattributes import CharTermAttribute
+from collections import Counter
+import math
+
+
+class LuceneWeightedQueryGenerator:
+    """
+    A class for generating queries for Lucene based indexes
+    """
+
+    def __init__(self, analyzer, config, index_reader):
+        """
+        Parameters
+        ----------
+        analyzer : 
+            the luncene analyzer used to create queries
+        config : IndexConfig
+            the index config of the index that will be searched
+        """
+        self._analyzer = analyzer # 分词器
+        self._config = config # 索引配置
+        self._index_reader = index_reader # 索引读取器
+        self._num_docs = self._index_reader.numDocs() # 文档总数
+        self._query_builder = QueryBuilder(analyzer)
+        self._query_builder.setEnableGraphQueries(False)
+    
+
+    def _generate_weighted_clause(self, field, val):
+        # 1. 初始化查询构建器和词频计数器
+        builder = BooleanQuery.Builder()
+        term_freq = Counter()
+        # 2. 对字段值进行分词
+        tstream = self._analyzer.tokenStream(field, val)
+        termAtt = tstream.getAttribute(CharTermAttribute.class_)
+        try:
+            tstream.clearAttributes()
+            tstream.reset()
+            # 3. 计算词频
+            while tstream.incrementToken():
+                term_freq[termAtt.toString()] += 1
+        finally:
+            tstream.end()
+            tstream.close()
+        # 4. 计算每个词项的权重，字段基础权重（去掉分析器后缀）
+        base_field = field.split('.')[0]
+
+        field_weight = self._config.field_weights.get(base_field, 1.0)
+
+        N = 1 + self._num_docs
+        for tok, tf in term_freq.items():
+            term = Term(field, tok)
+            df = self._index_reader.docFreq(term)
+            # term not in index, ignore since it will not 
+            # affect scores
+            if not df:
+                continue
+            # sublinear tf and smooth idf
+            # 5. 计算TF-IDF权重
+            tf_idf_weight  = (math.log(tf) + 1) * (math.log(N / (df + 1)) + 1)
+
+            # 组合字段权重和TF-IDF权重
+            final_weight = field_weight * tf_idf_weight
+
+            # 6. 添加带权重的词项查询
+            builder.add(
+                BoostQuery(TermQuery(term), final_weight), 
+                BooleanClause.Occur.SHOULD
+            )
+
+        return builder.build()
+
+
+
+    def generate_query(self, doc, query_spec):
+        """
+        Generate a query for doc given the query spec
+
+        Parameters
+        ----------
+        doc : dict | pd.Series
+            a record that will be used to generate the query
+        query_spec : QuerySpec
+            the template for the query being built
+
+        Returns
+        -------
+        A lucene query which can be passed to an index searcher
+        """
+        query = BooleanQuery.Builder()
+        filter_query = BooleanQuery.Builder()
+        filters = query_spec.filter
+        add_filter = False
+        
+        for field, indexed_fields in query_spec.items():
+            # 1. 获取字段值
+            if field not in doc:
+                # create concat field on the fly
+                # 处理连接字段
+                if field in self._config.concat_fields:
+                    val = ' '.join(str(doc[f]) for f in self._config.concat_fields[field])
+                else:
+                    raise RuntimeError(f'field {field} not in search document {doc}, (config : {self._config.to_dict()})')
+            else:
+                # otherwise just retrive from doc
+                val = doc[field]
+
+            # convert to lucene query if the val is valid
+            if is_null(val):
+                continue
+
+            val = str(val)
+            # 2. 为每个索引字段生成带权重的查询子句
+            for f in indexed_fields:
+                clause = self._generate_weighted_clause(f, val)
+                # empty clause skip adding to query
+                if clause is None:
+                    continue
+
+                if (field, f) in filters:
+                    filter_query.add(clause, BooleanClause.Occur.SHOULD)
+                    add_filter = True
+
+                # add boosting weight if it exists
+                weight = query_spec.boost_map.get((field, f))
+                if weight is not None:
+                    clause = BoostQuery(clause, weight)
+
+                query.add(clause, BooleanClause.Occur.SHOULD)
+
+
+        if len(filters) != 0 and add_filter:
+            query.add(filter_query.build(), BooleanClause.Occur.FILTER)
+
+        return query.build()
+
+    def generate_query_clauses(self, doc, query_spec):
+        """
+        generate the clauses for each field -> analyzer pair, filters are ignored
+
+        Parameters
+        ----------
+        doc : dict | pd.Series
+            a record that will be used to generate the clauses
+        query_spec : QuerySpec
+            the template for the query being built
+
+        Returns
+        -------
+        A dict of ((field, indexed_fields) -> BooleanQuery)
+        """
+        # this isn't great code writing considering that this is a 
+        # duplicate of the code above but generate_query is a hot code path
+        # and can use all the optimization that it can get
+        clauses = {}
+        for field, indexed_fields in query_spec.items():
+            if field not in doc:
+                # create concat field on the fly
+                if field in self._config.concat_fields:
+                    val = ' '.join(str(doc.get(f, '')) for f in self._config.concat_fields[field])
+                else:
+                    raise RuntimeError(f'field {field} not in search document {doc}')
+            else:
+                # otherwise just retrive from doc
+                val = doc[field]
+            # convert to lucene query if the val is valid
+            if pd.isnull(val):
+                continue
+
+            for f in indexed_fields:
+                clause = self._query_builder.createBooleanQuery(f, str(val))
+                if clause is None:
+                    continue
+                # add boosting weight if it exists
+                weight = query_spec.boost_map.get((field, f))
+                if weight is not None:
+                    clause = BoostQuery(clause, weight)
+
+                clauses[(field, f)] = clause
+
+        return clauses
+
+================
+File: query_generator/query_spec.py
+================
+from copy import deepcopy
+import pandas as pd
+from sparkly.utils import type_check_call
+from typing import Tuple, Iterable
+
+class QuerySpec(dict):
+    """
+    A specification for generating queries
+    """
+
+    def __init__(self, *args, **kwargs):
+        """
+        """
+        super().__init__(*args, **kwargs)
+        for k, v in self.items():
+            if not isinstance(v, (set, list, tuple)):
+                raise TypeError(f'value must be (set, list, tuple), not {type(v)}')
+            for s in v:
+                if not isinstance(s, str):
+                    raise TypeError(f'all paths must be strings, not {type(s)}')
+            else:
+                self[k] = set(v)
+
+        self._boost_map = {}
+        # filter is only applied if the pair is also used in scoring
+        # currently OR 
+        self._filter = frozenset()
+    
+    def __hash__(self):
+        return hash(frozenset(self.keys()))
+
+    def __eq__(self, o):
+        return super().__eq__(o) and self._boost_map == o._boost_map and self._filter == o._filter
+
+    @property
+    def size(self):
+        return sum(map(len, self.values()))
+
+    @property
+    def filter(self):
+        return self._filter
+
+    @filter.setter
+    def filter(self, fil: Iterable[Tuple[str, str]]):
+        for k in fil:
+            if not isinstance(k, tuple):
+                raise TypeError(f'all keys must be tuple (got {type(k)})')
+                if len(k) != 2 or isinstance(k[0], str) or isinstance(k[1], str):
+                    raise TypeError(f'all keys must be pairs of strings (got {k})')
+
+        fil = frozenset(fil)
+        pairs = {(k,x) for k,v in self.items() for x in v}
+
+        missing = fil - pairs
+        if len(missing) != 0:
+            raise RuntimeError(f'all pairs in the filter must be used for scoring in the query spec (missing {missing})')
+
+        self._filter = fil
+
+    @property
+    def boost_map(self):
+        """
+        The boosting weights for each (search_field -> indexed_field) 
+        pair. If a pair doesn't exist in the map, the boost weight is 1
+        """
+        return self._boost_map
+
+    @boost_map.setter
+    @type_check_call
+    def boost_map(self, boost_map: dict | pd.Series):
+        for k,v in boost_map.items():
+            if not isinstance(k, tuple):
+                raise TypeError(f'all keys must be tuples (got {type(k)})')
+                if len(k) != 2 or isinstance(k[0], str) or isinstance(k[1], str):
+                    raise TypeError(f'all keys must be pairs of strings (got {k})')
+
+            if not isinstance(v, float):
+                raise TypeError(f'all boosting weights must be floats (got {type(v)})')
+
+        self._boost_map = {k : float(v) for k,v in boost_map.items()}
+
+    @type_check_call
+    def union(self, other):
+        self = deepcopy(self)
+        for k,v in other.items():
+            self[k] = self.get(k, set()) | v
+
+        return self
+
+    @type_check_call
+    def is_subset(self, other) -> bool:
+        for k,v in other.items():
+            if k not in self or self[k].issuperset(v):
+                return False
+        return True
+
+    def to_dict(self) -> dict:
+        return {
+                'boost_map' : deepcopy(self._boost_map),
+                'spec' : {k : list(v) for k,v in self.items()},
+                'filter' : list(self._filter)
+        }
+
+================
+File: search.py
+================
+import sys
+sys.path.append('.')
+import pyspark.sql.types as T
+import pyspark
+import pandas as pd
+from sparkly.index import QueryResult, Index
+from sparkly.query_generator import QuerySpec
+from sparkly.utils import type_check_call
+from pydantic import (
+        PositiveInt,
+)
+
+
+CHUNK_SIZE=500
+JSON_DATA = {}
+
+class Searcher:
+    """
+    class for performing bulk search over a dataframe
+    """
+    @type_check_call
+    def __init__(self, index: Index, search_chunk_size: PositiveInt=CHUNK_SIZE):
+        """
+
+        Parameters
+        ----------
+        index : Index
+            The index that will be used for search
+        search_chunk_size : int
+            the number of records is each partition for searching
+        """
+        self._index = index
+        self._search_chunk_size = search_chunk_size
+    
+    def get_full_query_spec(self):
+        """
+        get a query spec that searches on all indexed fields
+        """
+        return self._index.get_full_query_spec()
+    
+    @type_check_call
+    def search(self, search_df: pyspark.sql.DataFrame, query_spec: QuerySpec, limit: PositiveInt, id_col: str='_id'):
+        """
+        perform search for all the records in search_df according to
+        query_spec
+
+        Parameters
+        ----------
+
+        search_df : pyspark.sql.DataFrame
+            the records used for searching
+        query_spec : QuerySpec
+            the query spec for searching
+        limit : int
+            the topk that will be retrieved for each query
+        id_col : str
+            the id column from search_df that will be output with the query results
+
+        Returns
+        -------
+        pyspark DataFrame
+            a pyspark dataframe with the schema (`id_col`, ids array<long> , scores array<float>, search_time float)
+        """
+        return self._search_spark(search_df, query_spec, limit, id_col)
+
+
+
+    def _search_spark(self, search_df, query_spec, limit, id_col='_id'):
+        # set data to spark workers
+        self._index.to_spark()
+
+        projection = self._index.config.get_analyzed_fields(query_spec)
+        if id_col not in projection:
+            projection.append(id_col)
+        # 2. 数据分区
+        search_df = search_df.select(projection)\
+                        .repartition(max(1, search_df.count() // self._search_chunk_size), id_col)
+
+        f = lambda x : _search_spark(self._index, query_spec, limit, x, id_col)
+
+        query_result_fields = [id_col] + list(QueryResult._fields)
+        query_result_types = [ T.LongType(), T.ArrayType(T.LongType()), T.ArrayType(T.FloatType()), T.FloatType()]
+        query_result_schema = T.StructType(list(map(T.StructField, query_result_fields, query_result_types)))
+
+        res = search_df.mapInPandas(f, query_result_schema)
+        return res
+
+
+def _search_spark(index, query_spec, limit, partition_itr, id_col):
+    index.init()
+    for part in partition_itr:
+        part = part.set_index(id_col)
+        yield _search_many(index, query_spec, limit, part)
+
+def _search_many(index, query_spec, limit, df):
+
+    res = index.search_many(df, query_spec, limit)
+    return res.reset_index(drop=False)
+
+
+def search(index, query_spec, limit, search_recs):
+    return  list(search_gen(index, query_spec, limit, search_recs))
+
+def search_gen(index, query_spec, limit, search_recs):
+    index.init() # 初始化索引
+    for rec in search_recs:# 对每条记录执行搜索
+        yield index.search(rec, query_spec, limit)
+
+================
+File: simhash_reranker.py
+================
+#!/usr/bin/env python3
+"""
+SimHash重排序器 - 基于SimHash特征的搜索结果重排序
+
+主要功能:
+1. 从优化结果中加载字段权重
+2. 基于加权字段提取SimHash特征
+3. 计算查询与候选文档的SimHash相似度
+4. 融合BM25分数和SimHash相似度进行重排序
+5. 评估重排序效果
+
+作者: Zane
+日期: 2025
+"""
+
+import json
+import pandas as pd
+import numpy as np
+import hashlib
+from typing import List, Dict, Tuple, Optional
+from collections import Counter
+import re
+from dataclasses import dataclass
+import time
+
+
+@dataclass
+class RerankerConfig:
+    """重排序器配置"""
+    simhash_bits: int = 64  # SimHash位数
+    alpha: float = 0.7      # BM25权重
+    beta: float = 0.3       # SimHash权重
+    use_3gram: bool = True  # 是否使用3-gram特征
+    normalize_scores: bool = True  # 是否标准化分数
+
+
+class TextAnalyzer:
+    """文本分析器 - 复现Sparkly的分析器功能"""
+    
+    def __init__(self, use_3gram: bool = True):
+        self.use_3gram = use_3gram
+        
+    def standard_tokenize(self, text: str) -> List[str]:
+        """标准分词器 - 基于空格和标点符号"""
+        if not text:
+            return []
+        # 转小写，移除特殊字符，按空格分词
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        tokens = text.split()
+        return [token for token in tokens if len(token) > 0]
+    
+    def gram3_tokenize(self, text: str) -> List[str]:
+        """3-gram分词器"""
+        if not text:
+            return []
+        # 移除非字母数字字符，转小写
+        text = re.sub(r'[^a-zA-Z0-9]', '', text.lower())
+        if len(text) < 3:
+            return [text] if text else []
+        
+        grams = []
+        for i in range(len(text) - 2):
+            gram = text[i:i+3]
+            if gram.isalnum():  # 只保留字母数字3-gram
+                grams.append(gram)
+        return grams
+    
+    def analyze(self, text: str, analyzer_type: str = 'standard') -> List[str]:
+        """分析文本，返回token列表"""
+        if not text:
+            return []
+            
+        if analyzer_type == 'standard':
+            return self.standard_tokenize(text)
+        elif analyzer_type == '3gram':
+            return self.gram3_tokenize(text)
+        else:
+            raise ValueError(f"Unsupported analyzer type: {analyzer_type}")
+
+
+class SimHashExtractor:
+    """SimHash特征提取器"""
+    
+    def __init__(self, config: RerankerConfig, field_weights: Dict[str, float]):
+        self.config = config
+        self.field_weights = field_weights
+        self.analyzer = TextAnalyzer(config.use_3gram)
+        
+    def extract_weighted_tokens(self, record: Dict) -> List[Tuple[str, float]]:
+        """提取加权token"""
+        weighted_tokens = []
+        
+        # 处理各个字段
+        for field in ['name', 'description', 'price']:
+            if field in record and record[field]:
+                text = str(record[field])
+                weight = self.field_weights.get(field, 0.0)
+                
+                # 标准分析器
+                standard_tokens = self.analyzer.analyze(text, 'standard')
+                for token in standard_tokens:
+                    weighted_tokens.append((f"{field}.standard.{token}", weight))
+                
+                # 3-gram分析器
+                if self.config.use_3gram:
+                    gram_tokens = self.analyzer.analyze(text, '3gram')
+                    for token in gram_tokens:
+                        weighted_tokens.append((f"{field}.3gram.{token}", weight))
+        
+        # 处理concat字段
+        concat_weight = self.field_weights.get('concat_description_name_price', 0.0)
+        if concat_weight > 0:
+            concat_text = ""
+            for field in ['name', 'description', 'price']:
+                if field in record and record[field]:
+                    concat_text += " " + str(record[field])
+            
+            if concat_text.strip():
+                # 标准分析器
+                standard_tokens = self.analyzer.analyze(concat_text, 'standard')
+                for token in standard_tokens:
+                    weighted_tokens.append((f"concat.standard.{token}", concat_weight))
+                
+                # 3-gram分析器
+                if self.config.use_3gram:
+                    gram_tokens = self.analyzer.analyze(concat_text, '3gram')
+                    for token in gram_tokens:
+                        weighted_tokens.append((f"concat.3gram.{token}", concat_weight))
+        
+        return weighted_tokens
+    
+    def compute_simhash(self, record: Dict) -> int:
+        """计算记录的SimHash值"""
+        weighted_tokens = self.extract_weighted_tokens(record)
+        
+        if not weighted_tokens:
+            return 0
+        
+        # 初始化特征向量
+        feature_vector = [0.0] * self.config.simhash_bits
+        
+        # 对每个加权token进行处理
+        for token, weight in weighted_tokens:
+            # 计算token的哈希值
+            hash_value = int(hashlib.md5(token.encode('utf-8')).hexdigest(), 16)
+            
+            # 对于每一位，根据哈希值的对应位来更新特征向量
+            for i in range(self.config.simhash_bits):
+                bit = (hash_value >> i) & 1
+                if bit == 1:
+                    feature_vector[i] += weight
+                else:
+                    feature_vector[i] -= weight
+        
+        # 生成最终的SimHash
+        simhash = 0
+        for i in range(self.config.simhash_bits):
+            if feature_vector[i] > 0:
+                simhash |= (1 << i)
+        
+        return simhash
+
+
+class SimHashReranker:
+    """SimHash重排序器主类"""
+    
+    def __init__(self, config: RerankerConfig = None):
+        self.config = config or RerankerConfig()
+        self.field_weights = {}
+        self.extractor = None
+        
+    def load_optimization_result(self, opt_result_path: str):
+        """加载优化结果，获取字段权重"""
+        with open(opt_result_path, 'r', encoding='utf-8') as f:
+            opt_result = json.load(f)
+        
+        self.field_weights = opt_result['field_weights']
+        print(f"加载字段权重: {self.field_weights}")
+        
+        # 初始化特征提取器
+        self.extractor = SimHashExtractor(self.config, self.field_weights)
+        
+    def hamming_distance(self, hash1: int, hash2: int) -> int:
+        """计算汉明距离"""
+        return bin(hash1 ^ hash2).count('1')
+    
+    def simhash_similarity(self, hash1: int, hash2: int) -> float:
+        """计算SimHash相似度 (0-1之间，1表示完全相同)"""
+        distance = self.hamming_distance(hash1, hash2)
+        similarity = 1.0 - (distance / self.config.simhash_bits)
+        return max(0.0, similarity)
+    
+    def normalize_scores(self, scores: np.ndarray) -> np.ndarray:
+        """标准化分数到0-1范围"""
+        if len(scores) == 0:
+            return scores
+        min_score = scores.min()
+        max_score = scores.max()
+        if max_score == min_score:
+            return np.ones_like(scores)
+        return (scores - min_score) / (max_score - min_score)
+    
+    def rerank_candidates(self, 
+                         query_record: Dict, 
+                         candidate_records: List[Dict], 
+                         original_scores: List[float]) -> Tuple[List[int], List[float], Dict]:
+        """重排序候选结果
+        
+        Args:
+            query_record: 查询记录
+            candidate_records: 候选记录列表
+            original_scores: 原始BM25分数
+            
+        Returns:
+            (重排序后的索引, 融合分数, 调试信息)
+        """
+        if not self.extractor:
+            raise ValueError("请先调用load_optimization_result加载配置")
+        
+        start_time = time.time()
+        
+        # 1. 计算查询记录的SimHash
+        query_simhash = self.extractor.compute_simhash(query_record)
+        
+        # 2. 计算所有候选记录的SimHash和相似度
+        simhash_similarities = []
+        candidate_simhashes = []
+        
+        for candidate in candidate_records:
+            candidate_simhash = self.extractor.compute_simhash(candidate)
+            candidate_simhashes.append(candidate_simhash)
+            similarity = self.simhash_similarity(query_simhash, candidate_simhash)
+            simhash_similarities.append(similarity)
+        
+        # 3. 标准化分数
+        original_scores = np.array(original_scores)
+        simhash_similarities = np.array(simhash_similarities)
+        
+        if self.config.normalize_scores:
+            norm_bm25 = self.normalize_scores(original_scores)
+            norm_simhash = simhash_similarities  # SimHash相似度已经在0-1范围内
+        else:
+            norm_bm25 = original_scores
+            norm_simhash = simhash_similarities
+        
+        # 4. 分数融合
+        fused_scores = (self.config.alpha * norm_bm25 + 
+                       self.config.beta * norm_simhash)
+        
+        # 5. 重排序
+        ranking_indices = np.argsort(-fused_scores)  # 降序排列
+        reranked_scores = fused_scores[ranking_indices]
+        
+        # 6. 准备调试信息
+        processing_time = time.time() - start_time
+        debug_info = {
+            'query_simhash': query_simhash,
+            'candidate_simhashes': candidate_simhashes,
+            'original_scores': original_scores.tolist(),
+            'simhash_similarities': simhash_similarities.tolist(),
+            'fused_scores': fused_scores.tolist(),
+            'processing_time': processing_time,
+            'config': {
+                'alpha': self.config.alpha,
+                'beta': self.config.beta,
+                'simhash_bits': self.config.simhash_bits
+            }
+        }
+        
+        return ranking_indices.tolist(), reranked_scores.tolist(), debug_info
+
+
+class RerankerEvaluator:
+    """重排序效果评估器"""
+    
+    def __init__(self):
+        pass
+    
+    def load_ground_truth(self, gold_path: str) -> Dict[int, int]:
+        """加载真实标签"""
+        with open(gold_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        gold_mapping = {}
+        for line in lines:
+            if line.strip():
+                data = json.loads(line.strip())
+                # id2 (table_b) -> id1 (table_a)
+                gold_mapping[data['id2']] = data['id1']
+        
+        return gold_mapping
+    
+    def calculate_metrics(self, 
+                         query_id: int,
+                         original_ranking: List[int],
+                         reranked_ranking: List[int],
+                         gold_mapping: Dict[int, int],
+                         k_values: List[int] = [1, 5, 10, 20]) -> Dict:
+        """计算评估指标"""
+        
+        if query_id not in gold_mapping:
+            return {'has_ground_truth': False}
+        
+        true_match_id = gold_mapping[query_id]
+        
+        metrics = {'has_ground_truth': True, 'true_match_id': true_match_id}
+        
+        # 计算不同k值下的Recall@k和排名变化
+        for k in k_values:
+            # 原始排序
+            orig_topk = original_ranking[:k]
+            orig_recall = 1.0 if true_match_id in orig_topk else 0.0
+            orig_rank = orig_topk.index(true_match_id) + 1 if true_match_id in orig_topk else -1
+            
+            # 重排序后
+            rerank_topk = reranked_ranking[:k]
+            rerank_recall = 1.0 if true_match_id in rerank_topk else 0.0
+            rerank_rank = rerank_topk.index(true_match_id) + 1 if true_match_id in rerank_topk else -1
+            
+            metrics[f'original_recall@{k}'] = orig_recall
+            metrics[f'reranked_recall@{k}'] = rerank_recall
+            metrics[f'original_rank@{k}'] = orig_rank
+            metrics[f'reranked_rank@{k}'] = rerank_rank
+            metrics[f'rank_improvement@{k}'] = orig_rank - rerank_rank if orig_rank > 0 and rerank_rank > 0 else 0
+        
+        return metrics
+
+
+if __name__ == "__main__":
+    # 基本使用示例
+    print("SimHash重排序器已准备就绪!")
+    print("使用方法:")
+    print("1. 创建重排序器: reranker = SimHashReranker()")
+    print("2. 加载配置: reranker.load_optimization_result('optimization_result.json')")
+    print("3. 重排序: ranking, scores, debug = reranker.rerank_candidates(query, candidates, scores)")
+
+================
+File: sparkly_auto.py
+================
+import pandas as pd
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+from sparkly.index import  LuceneIndex
+from sparkly.index_config import IndexConfig
+from sparkly.index_optimizer import IndexOptimizer
+from sparkly.search import Searcher
+from sparkly.utils import local_parquet_to_spark_df
+from argparse import ArgumentParser
+
+argp = ArgumentParser()
+# blocking config
+argp.add_argument('--k', type=int, required=False, default=50)
+# 'standard' and '3gram' and the only two options right now
+argp.add_argument('--table_a', type=str, required=True, help='the table to be indexed')
+argp.add_argument('--table_b', type=str, required=False, default=None, help='the table used for search')
+argp.add_argument('--gold', type=str, required=False, help='the ground truth for the dataset')
+argp.add_argument('--output_file', type=str, required=False, help='where the parquet file of the script output will be placed')
+
+args = argp.parse_args()
+
+def main(args):
+    # the number of candidates returned per record
+    limit = args.k
+
+    # initialize a local spark context
+    spark = SparkSession.builder\
+                        .appName('Sparkly-Auto')\
+                        .getOrCreate()
+    # read all the data as spark dataframes
+    table_a = local_parquet_to_spark_df(args.table_a)
+    table_b = table_a if args.table_b is None else local_parquet_to_spark_df(args.table_b)
+
+
+
+
+    index_optimizer = IndexOptimizer(args.table_b is None)
+    config = index_optimizer.make_index_config(table_a)
+
+    # create a new index stored at /tmp/example_index/
+    index = LuceneIndex('/tmp/lucene_index/', config)
+    # index the records from table A according to the config we created above
+    index.upsert_docs(table_a)
+
+    # get a query spec (template) which searches on 
+    # all indexed fields
+    query_spec = index_optimizer.optimize(index, table_b)
+    # create a searcher for doing bulk search using our index
+    searcher = Searcher(index)
+    # search the index with table b
+    candidates = searcher.search(table_b, query_spec, id_col='_id', limit=limit).persist()
+    
+    candidates.count()
+    candidates.show()
+    # output is rolled up 
+    # search record id -> (indexed ids + scores + search time)
+    #
+    # explode the results to compute recall
+    
+    if args.gold:
+        gold = local_parquet_to_spark_df(args.gold)
+
+        pairs = candidates.select(
+                            F.explode('ids').alias('a_id'),
+                            F.col('_id').alias('b_id')
+                        )
+        # dedupe case
+        if args.table_b is None:
+            pairs = pairs.select(
+                    F.least('a_id', 'b_id').alias('a_id'),
+                    F.greatest('a_id', 'b_id').alias('b_id')
+                    ).drop_duplicates()
+
+        # number of matches found
+        true_positives = gold.intersect(pairs).count()
+        # precentage of matches found
+        recall = true_positives / gold.count()
+
+        print(f'true_positives : {true_positives}')
+        print(f'recall : {recall}')
+    else:
+        print('gold not provided, skipping computing recall')
+
+    # write output locally
+    if args.output_file:
+        candidates.toPandas().to_parquet(args.output_file, index=False)
+
+    candidates.unpersist()
+
+if __name__ == '__main__':
+    main(argp.parse_args())
+
+================
+File: utils.py
+================
+from contextlib import contextmanager
+from tempfile import mkdtemp, mkstemp
+import shutil
+import os
+import time
+import sys
+import logging
+import warnings
+import re
+from pathlib import Path
+from zipfile import ZipFile
+
+import psutil
+import pandas as pd
+import numpy as np
+from joblib.externals.loky import get_reusable_executor
+
+from pyspark import SparkContext
+from pyspark import StorageLevel
+from pyspark.sql import SparkSession
+import pyspark.sql.types as T
+# needed to find the parquet module
+import pyarrow.parquet
+import pyarrow as pa
+from pyarrow.parquet import ParquetFile
+import lucene
+import numba as nb
+from pydantic import validate_call, ConfigDict
+
+
+logging.basicConfig(
+        stream=sys.stderr,
+        format='[%(filename)s:%(lineno)s - %(funcName)s() ] %(asctime)-15s : %(message)s',
+)
+logger = logging.getLogger(__name__)
+
+
+
+type_check_call = validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+
+def get_index_name(n, *postfixes):
+    """
+    utility function for generating index names in a uniform way
+    """
+    s = n.lower().replace('-', '_')
+    if len(postfixes) != 0:
+        s += '_' + '_'.join(postfixes)
+    return s
+
+
+
+class Timer:
+    """
+    utility class for timing execution of code
+    """
+
+    def __init__(self):
+        self.start_time = time.time()
+        self._last_interval = time.time()
+
+    def get_interval(self):
+        """
+        get the time that has elapsed since the object was created or the 
+        last time get_interval() was called
+
+        Returns
+        -------
+        float
+        """
+        t = time.time()
+        interval = t - self._last_interval
+        self._last_interval = t
+        return interval
+
+    def get_total(self):
+        """
+        get total time this Timer has been alive
+
+        Returns
+        -------
+        float
+        """
+        return time.time() - self.start_time
+
+    def set_start_time(self):
+        """
+        set the start time to the current time
+        """
+        self.start_time = time.time()
+
+
+def get_logger(name, level=logging.DEBUG):
+    """
+    Get the logger for a module
+
+    Returns
+    -------
+    Logger
+
+    """
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    return logger
+
+'''
+AUC for an array sorted in decending order
+slightly different results to np.trapz due to 
+FP error
+'''
+@nb.njit('float32(float32[::1])')
+def auc(x):
+    return x[1:].sum() + (x[0] - x[-1]) / 2
+
+'''
+AUC for an array sorted in decending order
+slightly different results to np.trapz due to 
+FP error
+'''
+@nb.njit('float32(float32[::1])')
+def norm_auc(x):
+    return (x[1:].sum() + (x[0] - x[-1]) / 2) / len(x)
+
+
+def atomic_unzip(zip_file_name, output_loc):
+    """
+    atomically unzip the file, that is this function is safe to call 
+    from multiple threads at the same time
+
+    Parameters
+    ----------
+    zip_file_name : str
+        the name of the file to be unzipped
+
+    output_loc : str
+        the location that the file will be unzipped to
+    """
+
+    out = Path(output_loc).absolute()
+    lock = Path(str(out) + '.lock')
+    tmp_out = Path(str(out) + '.tmp_out')
+
+    if out.exists():    
+        return    
+    
+    try:    
+        # try to acquire the lock
+        # throws FileExistsError if someone else grabbed it
+        lock_fd = os.open(str(lock.absolute()), os.O_EXCL | os.O_CREAT)  
+        #os.fsync(lock_fd)
+        #fd = os.open(str(out.parent.absolute()), os.O_RDONLY)
+        #os.fsync(fd)
+        #os.close(fd)
+        try:    
+            # unzip the dir if it doesn't exist
+            if not out.exists():    
+                with ZipFile(zip_file_name, 'r') as zf:
+                    zf.extractall(str(tmp_out))
+                # move to final output location
+                tmp_out.rename(out)
+        finally:    
+            # release the lock
+            os.close(lock_fd)
+            lock.unlink()    
+    
+    except FileExistsError:    
+        # failed to get lock 
+        # wait for other thread to do the unzipping
+        while lock.exists():    
+            pass    
+        # something is wrong if the lock was released but the dir
+        # wasnt' created by someone else
+        if not out.exists():    
+            raise RuntimeError('atomic unzip failed for {f}')
+
+
+def _add_file_recursive(zip_file, base, file):
+    if file.is_dir():
+        for f in file.iterdir():
+            _add_file_recursive(zip_file, base, f)
+    else:
+        zip_file.write(file, arcname=file.relative_to(base))
+
+def zip_dir(d, outfile=None):
+    """
+    Zip a directory `d` and output it to `outfile`. If 
+    `outfile` is not provided, the zipped file is output in /tmp
+
+    Parameters
+    ----------
+    d : str or Path
+        the directory to be zipped
+
+    outfile : str or Path, optional
+        the output location of the zipped file
+
+    Returns
+    -------
+    Path 
+        the path to the new zip file
+
+    """
+    p = Path(d)
+
+    tmp_zip_file = Path(outfile) if outfile is not None else Path(mkstemp(prefix=d.name, suffix='.zip')[1])
+
+    with ZipFile(tmp_zip_file, 'w') as zf:
+        _add_file_recursive(zf, p, p)
+
+    return tmp_zip_file
+
+def init_jvm(vmargs=[]):
+    """
+    initialize the jvm for PyLucene
+
+    Parameters
+    ----------
+    vmargs : list[str]
+        the jvm args to the passed to the vm
+    """
+    if not lucene.getVMEnv():
+        lucene.initVM(vmargs=['-Djava.awt.headless=true'] + vmargs)
+
+def attach_current_thread_jvm():
+    """
+    attach the current thread to the jvm for PyLucene
+    """
+    env = lucene.getVMEnv()
+    env.attachCurrentThread()
+
+def invoke_task(task):
+    """
+    invoke a task created by joblib.delayed
+    """
+    # task == (function, *args, **kwargs)
+    return task[0](*task[1], **task[2])
+
+
+@contextmanager
+def persisted(df, storage_level=StorageLevel.MEMORY_AND_DISK):
+    """
+    context manager for presisting a dataframe in a with statement.
+    This automatically unpersists the dataframe at the end of the context
+    """
+    if df is not None:
+        df = df.persist(storage_level) 
+    try:
+        yield df
+    finally:
+        if df is not None:
+            df.unpersist()
+
+def is_persisted(df):
+    """
+    check if the pyspark dataframe is persist
+    """
+    sl = df.storageLevel
+    return sl.useMemory or sl.useDisk
+
+
+def repartition_df(df, part_size, by=None):
+    """
+    repartition the dataframe into chunk of size 'part_size'
+    by column 'by'
+    """
+    cnt = df.count()
+    n = max(cnt // part_size, SparkContext.getOrCreate().defaultParallelism * 4)
+    n = min(n, cnt)
+    if by is not None:
+        return df.repartition(n, by)
+    else:
+        return df.repartition(n)
+
+
+
+def is_null(o):
+    """
+    check if the object is null, note that this is here to 
+    get rid of the weird behavior of np.isnan and pd.isnull
+    """
+    r = pd.isnull(o)
+    return r if isinstance(r, bool) else False
+
+
+
+_loky_re = re.compile('LokyProcess-\\d+')    
+def _is_loky(c):    
+    return any(map(_loky_re.match, c.cmdline()))    
+    
+def kill_loky_workers():
+    """
+    kill all the child loky processes of this process. 
+    used to prevent joblib from sitting on resources after using 
+    joblib.Parallel to do computation
+    """
+    '''
+    get_reusable_executor().shutdown(wait=True, kill_workers=True)
+    return 
+    '''
+
+    proc_killed = False
+    parent_proc = psutil.Process()    
+    for c in parent_proc.children(recursive=True):    
+        if _is_loky(c):    
+            c.terminate()    
+            c.wait()
+            proc_killed = True
+
+    if not proc_killed:
+        warnings.warn('kill_loky_workers invoked but no processes were killed', UserWarning)
+
+
+ 
+def spark_to_pandas_stream(df, chunk_size, by='_id'):
+    """
+    repartition df into chunk_size and return as iterator of 
+    pandas dataframes
+    """
+    df_size = df.count()
+    batch_df = df.repartition(max(1, df_size // chunk_size), by)\
+            .rdd\
+            .mapPartitions(lambda x : iter([pd.DataFrame([e.asDict(True) for e in x]).convert_dtypes()]) )\
+            .persist(StorageLevel.DISK_ONLY)
+    # trigger read
+    batch_df.count()
+    for batch in batch_df.toLocalIterator(True):
+        yield batch
+
+    batch_df.unpersist()
+
+def type_check(var, var_name, expected):
+    """
+    type checking utility, throw a type error if the var isn't the expected type
+    """
+    if not isinstance(var, expected):
+        raise TypeError(f'{var_name} must be type {expected} (got {type(var)})')
+
+def type_check_iterable(var, var_name, expected_var_type, expected_element_type):
+    """
+    type checking utility for iterables, throw a type error if the var isn't the expected type
+    or any of the elements are not the expected type
+    """
+    type_check(var, var_name, expected_var_type)
+    for e in var:
+        if not isinstance(e, expected_element_type):
+            raise TypeError(f'all elements of {var_name} must be type{expected_element_type} (got {type(var)})')
+
+
+
+
+_PYARROW_TO_PYSPARK_TYPE = {
+        pa.int32() : T.IntegerType(),
+        pa.int64() : T.LongType(),
+        pa.float32() : T.FloatType(),
+        pa.float64() : T.DoubleType(),
+        pa.string() : T.StringType(),
+        pa.bool_() : T.BooleanType(),
+}
+
+_PYARROW_TO_PYSPARK_TYPE.update([(pa.list_(a), T.ArrayType(s)) for a,s in _PYARROW_TO_PYSPARK_TYPE.items()])
+
+def _arrow_schema_to_pyspark_schema(schema):
+    fields = []
+    for i in range(len(schema)):
+        af = schema.field(i)
+        fields.append(
+                T.StructField(af.name, _PYARROW_TO_PYSPARK_TYPE[af.type])
+        )
+
+    return T.StructType(fields)
+
+
+
+
+def local_parquet_to_spark_df(file):
+    file = Path(file).absolute()
+    spark = SparkSession.builder.getOrCreate()
+        
+    pf = ParquetFile(file)
+    # get the schema for the dataframe
+    arrow_schema = pf.schema_arrow
+    schema = _arrow_schema_to_pyspark_schema(arrow_schema)
+    pdf = pd.read_parquet(file)
+    df = spark.createDataFrame(pdf, schema=schema, verifySchema=False)\
+
+    return df
+
+
+
+================================================================
+End of Codebase
+================================================================
