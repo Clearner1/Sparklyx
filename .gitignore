@@ -1,0 +1,8 @@
+# 排除超过 GitHub 文件大小限制的大文件
+data/structured/dblp-googlescholar/dblp-googlescholar_reranked_results_k50.json
+data/structured/dblp-googlescholar/sparkly_results_k50.json
+
+# 可以考虑排除所有大的结果文件
+# *.json 文件如果通常都很大的话
+# data/**/sparkly_results_k50.json
+# data/**/*_reranked_results_k50.json 
