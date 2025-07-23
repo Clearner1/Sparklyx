@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon-Google 数据集重排序评估结果可视化</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .metrics-container {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            min-width: 200px;
+            margin: 10px;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .metric-label {
+            font-size: 14px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .chart-container {
+            margin-bottom: 40px;
+        }
+        .chart-title {
+            text-align: center;
+            font-size: 20px;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: center;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .positive {
+            color: green;
+            font-weight: bold;
+        }
+        .negative {
+            color: red;
+            font-weight: bold;
+        }
+        .config-section {
+            background-color: #e9ecef;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+        .config-title {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .config-item {
+            display: inline-block;
+            margin-right: 20px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Amazon-Google 数据集重排序评估结果可视化</h1>
+        
+        <div class="config-section">
+            <div class="config-title">配置参数</div>
+            <div class="config-item"><strong>SimHash 位数:</strong> <span id="simhash-bits">64</span></div>
+            <div class="config-item"><strong>BM25 权重 (α):</strong> <span id="alpha">0.6</span></div>
+            <div class="config-item"><strong>SimHash 权重 (β):</strong> <span id="beta">0.4</span></div>
+            <div class="config-item"><strong>使用 3-gram:</strong> <span id="use-3gram">是</span></div>
+            <div class="config-item"><strong>归一化得分:</strong> <span id="normalize-scores">是</span></div>
+        </div>
+        
+        <div class="metrics-container">
+            <div class="metric-card">
+                <div class="metric-value" id="total-queries">3226</div>
+                <div class="metric-label">总查询数</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="successful-queries">3225</div>
+                <div class="metric-label">成功处理</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="ground-truth-queries">1290</div>
+                <div class="metric-label">有真实标签</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="avg-time">53.46 ms</div>
+                <div class="metric-label">平均重排序时间</div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <div class="chart-title">Recall 对比 (原始 vs 重排序)</div>
+            <canvas id="recall-chart"></canvas>
+        </div>
+        
+        <div class="chart-container">
+            <div class="chart-title">排名改进统计</div>
+            <canvas id="rank-improvement-chart"></canvas>
+        </div>
+        
+        <div class="chart-container">
+            <div class="chart-title">正负改进数量对比</div>
+            <canvas id="improvement-count-chart"></canvas>
+        </div>
+        
+        <div class="chart-container">
+            <div class="chart-title">详细指标表</div>
+            <table id="metrics-table">
+                <thead>
+                    <tr>
+                        <th>指标</th>
+                        <th>原始值</th>
+                        <th>重排序后</th>
+                        <th>改进值</th>
+                        <th>正向改进数</th>
+                        <th>负向改进数</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- 数据将通过 JavaScript 填充 -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // 从 JSON 文件中读取数据
+        const data = {
+  "dataset": "amazon-google",
+  "total_queries": 3226,
+  "successful_queries": 3225,
+  "queries_with_ground_truth": 1290,
+  "total_rerank_time": 172.39658093452454,
+  "avg_rerank_time": 0.05345630416574404,
+  "config": {
+    "simhash_bits": 64,
+    "alpha": 0.6,
+    "beta": 0.4,
+    "use_3gram": true,
+    "normalize_scores": true
+  },
+  "evaluation_available": true,
+  "avg_original_recall@1": 0.05116279069767442,
+  "avg_reranked_recall@1": 0.1124031007751938,
+  "recall_improvement@1": 0.061240310077519386,
+  "avg_rank_improvement@1": 0.0,
+  "positive_improvements@1": 0,
+  "negative_improvements@1": 0,
+  "avg_original_recall@5": 0.1,
+  "avg_reranked_recall@5": 0.15426356589147286,
+  "recall_improvement@5": 0.054263565891472854,
+  "avg_rank_improvement@5": 0.07131782945736434,
+  "positive_improvements@5": 55,
+  "negative_improvements@5": 6,
+  "avg_original_recall@10": 0.13565891472868216,
+  "avg_reranked_recall@10": 0.1813953488372093,
+  "recall_improvement@10": 0.04573643410852715,
+  "avg_rank_improvement@10": 0.2364341085271318,
+  "positive_improvements@10": 98,
+  "negative_improvements@10": 10,
+  "avg_original_recall@20": 0.162015503875969,
+  "avg_reranked_recall@20": 0.19534883720930232,
+  "recall_improvement@20": 0.033333333333333326,
+  "avg_rank_improvement@20": 0.4968992248062015,
+  "positive_improvements@20": 131,
+  "negative_improvements@20": 10
+};
+
+        // 更新页面上的基本统计数据
+        document.getElementById('total-queries').textContent = data.total_queries;
+        document.getElementById('successful-queries').textContent = data.successful_queries;
+        document.getElementById('ground-truth-queries').textContent = data.queries_with_ground_truth;
+        document.getElementById('avg-time').textContent = (data.avg_rerank_time * 1000).toFixed(2) + ' ms';
+        
+        // 更新配置参数
+        document.getElementById('simhash-bits').textContent = data.config.simhash_bits;
+        document.getElementById('alpha').textContent = data.config.alpha;
+        document.getElementById('beta').textContent = data.config.beta;
+        document.getElementById('use-3gram').textContent = data.config.use_3gram ? '是' : '否';
+        document.getElementById('normalize-scores').textContent = data.config.normalize_scores ? '是' : '否';
+        
+        // 准备图表数据
+        const kValues = [1, 5, 10, 20];
+        const originalRecall = kValues.map(k => data[`avg_original_recall@${k}`]);
+        const rerankedRecall = kValues.map(k => data[`avg_reranked_recall@${k}`]);
+        const recallImprovement = kValues.map(k => data[`recall_improvement@${k}`]);
+        const rankImprovement = kValues.map(k => data[`avg_rank_improvement@${k}`]);
+        const positiveImprovements = kValues.map(k => data[`positive_improvements@${k}`]);
+        const negativeImprovements = kValues.map(k => data[`negative_improvements@${k}`]);
+        
+        // 绘制 Recall 对比图
+        const recallCtx = document.getElementById('recall-chart').getContext('2d');
+        new Chart(recallCtx, {
+            type: 'bar',
+            data: {
+                labels: kValues.map(k => `@${k}`),
+                datasets: [
+                    {
+                        label: '原始 Recall',
+                        data: originalRecall,
+                        backgroundColor: 'rgba(255, 99, 132, 0.6)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1
+                    },
+                    {
+                        label: '重排序后 Recall',
+                        data: rerankedRecall,
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Recall'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 绘制排名改进图
+        const rankCtx = document.getElementById('rank-improvement-chart').getContext('2d');
+        new Chart(rankCtx, {
+            type: 'line',
+            data: {
+                labels: kValues.map(k => `@${k}`),
+                datasets: [
+                    {
+                        label: '平均排名改进',
+                        data: rankImprovement,
+                        fill: false,
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1,
+                        pointBackgroundColor: 'rgb(75, 192, 192)'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '平均排名改进'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 绘制正负改进数量对比图
+        const improvementCtx = document.getElementById('improvement-count-chart').getContext('2d');
+        new Chart(improvementCtx, {
+            type: 'bar',
+            data: {
+                labels: kValues.map(k => `@${k}`),
+                datasets: [
+                    {
+                        label: '正向改进数量',
+                        data: positiveImprovements,
+                        backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1
+                    },
+                    {
+                        label: '负向改进数量',
+                        data: negativeImprovements,
+                        backgroundColor: 'rgba(255, 99, 132, 0.6)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '改进数量'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 填充表格数据
+        const tableBody = document.querySelector('#metrics-table tbody');
+        kValues.forEach(k => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>Recall@${k}</td>
+                <td>${data[`avg_original_recall@${k}`].toFixed(4)}</td>
+                <td>${data[`avg_reranked_recall@${k}`].toFixed(4)}</td>
+                <td class="${data[`recall_improvement@${k}`] >= 0 ? 'positive' : 'negative'}">
+                    ${data[`recall_improvement@${k}`] >= 0 ? '+' : ''}${data[`recall_improvement@${k}`].toFixed(4)}
+                </td>
+                <td>${data[`positive_improvements@${k}`]}</td>
+                <td>${data[`negative_improvements@${k}`]}</td>
+            `;
+            tableBody.appendChild(row);
+        });
+    </script>
+</body>
+</html>

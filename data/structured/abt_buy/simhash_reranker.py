@@ -80,54 +80,55 @@ class TextAnalyzer:
 
 
 class SimHashExtractor:
-    """SimHash特征提取器"""
+    """SimHash特征提取器（通用版，自动适配字段）"""
     
-    def __init__(self, config: RerankerConfig, field_weights: Dict[str, float]):
+    def __init__(self, config: RerankerConfig, field_weights: Dict[str, float], concat_fields: Dict[str, list], field_to_analyzers: Dict[str, list], default_analyzer: str = 'standard'):
         self.config = config
         self.field_weights = field_weights
+        self.concat_fields = concat_fields or {}
+        self.field_to_analyzers = field_to_analyzers or {}
+        self.default_analyzer = default_analyzer
         self.analyzer = TextAnalyzer(config.use_3gram)
-        
+
     def extract_weighted_tokens(self, record: Dict) -> List[Tuple[str, float]]:
-        """提取加权token"""
+        """提取加权token，自动适配所有字段和拼接字段"""
         weighted_tokens = []
-        
-        # 处理各个字段
-        for field in ['name', 'description', 'price']:
-            if field in record and record[field]:
-                text = str(record[field])
-                weight = self.field_weights.get(field, 0.0)
-                
-                # 标准分析器
-                standard_tokens = self.analyzer.analyze(text, 'standard')
-                for token in standard_tokens:
-                    weighted_tokens.append((f"{field}.standard.{token}", weight))
-                
-                # 3-gram分析器
-                if self.config.use_3gram:
-                    gram_tokens = self.analyzer.analyze(text, '3gram')
-                    for token in gram_tokens:
-                        weighted_tokens.append((f"{field}.3gram.{token}", weight))
-        
-        # 处理concat字段
-        concat_weight = self.field_weights.get('concat_description_name_price', 0.0)
-        if concat_weight > 0:
-            concat_text = ""
-            for field in ['name', 'description', 'price']:
-                if field in record and record[field]:
-                    concat_text += " " + str(record[field])
-            
-            if concat_text.strip():
-                # 标准分析器
-                standard_tokens = self.analyzer.analyze(concat_text, 'standard')
-                for token in standard_tokens:
-                    weighted_tokens.append((f"concat.standard.{token}", concat_weight))
-                
-                # 3-gram分析器
-                if self.config.use_3gram:
-                    gram_tokens = self.analyzer.analyze(concat_text, '3gram')
-                    for token in gram_tokens:
-                        weighted_tokens.append((f"concat.3gram.{token}", concat_weight))
-        
+        # 1. 普通字段
+        for field, weight in self.field_weights.items():
+            if field in self.concat_fields.keys():
+                continue  # 拼接字段后面处理
+            text = str(record.get(field, ""))
+            if not text or text == "nan":
+                continue
+            analyzers = self.field_to_analyzers.get(field, [self.default_analyzer])
+            for analyzer_type in analyzers:
+                # 只支持standard/3gram
+                if '3gram' in analyzer_type:
+                    tokens = self.analyzer.analyze(text, '3gram')
+                    prefix = f"{field}.3gram"
+                else:
+                    tokens = self.analyzer.analyze(text, 'standard')
+                    prefix = f"{field}.standard"
+                for token in tokens:
+                    weighted_tokens.append((f"{prefix}.{token}", weight))
+        # 2. 拼接字段
+        for concat_field, sub_fields in self.concat_fields.items():
+            weight = self.field_weights.get(concat_field, 0.0)
+            if weight <= 0:
+                continue
+            concat_text = " ".join([str(record.get(f, "")) for f in sub_fields if record.get(f, "") and str(record.get(f, "")) != "nan"])
+            if not concat_text.strip():
+                continue
+            analyzers = self.field_to_analyzers.get(concat_field, [self.default_analyzer])
+            for analyzer_type in analyzers:
+                if '3gram' in analyzer_type:
+                    tokens = self.analyzer.analyze(concat_text, '3gram')
+                    prefix = f"{concat_field}.3gram"
+                else:
+                    tokens = self.analyzer.analyze(concat_text, 'standard')
+                    prefix = f"{concat_field}.standard"
+                for token in tokens:
+                    weighted_tokens.append((f"{prefix}.{token}", weight))
         return weighted_tokens
     
     def compute_simhash(self, record: Dict) -> int:
@@ -163,23 +164,30 @@ class SimHashExtractor:
 
 
 class SimHashReranker:
-    """SimHash重排序器主类"""
+    """SimHash重排序器主类（自动适配所有数据集）"""
     
     def __init__(self, config: RerankerConfig = None):
         self.config = config or RerankerConfig()
         self.field_weights = {}
+        self.concat_fields = {}
+        self.field_to_analyzers = {}
+        self.default_analyzer = 'standard'
         self.extractor = None
         
     def load_optimization_result(self, opt_result_path: str):
-        """加载优化结果，获取字段权重"""
+        """加载优化结果，自动获取字段权重、拼接字段、分析器类型"""
         with open(opt_result_path, 'r', encoding='utf-8') as f:
             opt_result = json.load(f)
-        
         self.field_weights = opt_result['field_weights']
+        index_cfg = opt_result.get('index_config_summary', {})
+        self.concat_fields = index_cfg.get('concat_fields', {})
+        self.field_to_analyzers = index_cfg.get('field_to_analyzers', {})
+        self.default_analyzer = index_cfg.get('default_analyzer', 'standard')
         print(f"加载字段权重: {self.field_weights}")
-        
+        print(f"拼接字段: {self.concat_fields}")
+        print(f"字段分析器: {self.field_to_analyzers}")
         # 初始化特征提取器
-        self.extractor = SimHashExtractor(self.config, self.field_weights)
+        self.extractor = SimHashExtractor(self.config, self.field_weights, self.concat_fields, self.field_to_analyzers, self.default_analyzer)
         
     def hamming_distance(self, hash1: int, hash2: int) -> int:
         """计算汉明距离"""

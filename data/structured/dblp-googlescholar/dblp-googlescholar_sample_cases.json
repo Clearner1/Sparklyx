@@ -1,0 +1,104 @@
+[
+  {
+    "query_id": 16613,
+    "query_info": {
+      "title": "tsql2 language specification",
+      "authors": "a segev , md soo , sm sripada",
+      "venue": "acm sigmod",
+      "year": "None"
+    },
+    "metrics": {
+      "has_ground_truth": true,
+      "true_match_id": 921,
+      "original_recall@1": 0.0,
+      "reranked_recall@1": 0.0,
+      "original_rank@1": -1,
+      "reranked_rank@1": -1,
+      "rank_improvement@1": 0,
+      "original_recall@5": 1.0,
+      "reranked_recall@5": 1.0,
+      "original_rank@5": 2,
+      "reranked_rank@5": 3,
+      "rank_improvement@5": -1,
+      "original_recall@10": 1.0,
+      "reranked_recall@10": 1.0,
+      "original_rank@10": 2,
+      "reranked_rank@10": 3,
+      "rank_improvement@10": -1,
+      "original_recall@20": 1.0,
+      "reranked_recall@20": 1.0,
+      "original_rank@20": 2,
+      "reranked_rank@20": 3,
+      "rank_improvement@20": -1
+    },
+    "processing_time": 0.08603811264038086
+  },
+  {
+    "query_id": 48069,
+    "query_info": {
+      "title": "a consensus glossary of temporal database concepts",
+      "authors": "c dyreson",
+      "venue": "acm sigmod record ,",
+      "year": "1994"
+    },
+    "metrics": {
+      "has_ground_truth": true,
+      "true_match_id": 994,
+      "original_recall@1": 0.0,
+      "reranked_recall@1": 0.0,
+      "original_rank@1": -1,
+      "reranked_rank@1": -1,
+      "rank_improvement@1": 0,
+      "original_recall@5": 0.0,
+      "reranked_recall@5": 0.0,
+      "original_rank@5": -1,
+      "reranked_rank@5": -1,
+      "rank_improvement@5": 0,
+      "original_recall@10": 1.0,
+      "reranked_recall@10": 1.0,
+      "original_rank@10": 7,
+      "reranked_rank@10": 8,
+      "rank_improvement@10": -1,
+      "original_recall@20": 1.0,
+      "reranked_recall@20": 1.0,
+      "original_rank@20": 7,
+      "reranked_rank@20": 8,
+      "rank_improvement@20": -1
+    },
+    "processing_time": 0.0870208740234375
+  },
+  {
+    "query_id": 39695,
+    "query_info": {
+      "title": "book review column",
+      "authors": "sm databases",
+      "venue": "sigmod record ,",
+      "year": "2002"
+    },
+    "metrics": {
+      "has_ground_truth": true,
+      "true_match_id": 2598,
+      "original_recall@1": 0.0,
+      "reranked_recall@1": 0.0,
+      "original_rank@1": -1,
+      "reranked_rank@1": -1,
+      "rank_improvement@1": 0,
+      "original_recall@5": 0.0,
+      "reranked_recall@5": 0.0,
+      "original_rank@5": -1,
+      "reranked_rank@5": -1,
+      "rank_improvement@5": 0,
+      "original_recall@10": 1.0,
+      "reranked_recall@10": 1.0,
+      "original_rank@10": 7,
+      "reranked_rank@10": 6,
+      "rank_improvement@10": 1,
+      "original_recall@20": 1.0,
+      "reranked_recall@20": 1.0,
+      "original_rank@20": 7,
+      "reranked_rank@20": 6,
+      "rank_improvement@20": 1
+    },
+    "processing_time": 0.07620668411254883
+  }
+]
